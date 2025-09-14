@@ -1,6 +1,6 @@
 """
 Телеграм бот для торговых уведомлений и ИИ-анализа рынка
-Обновлено: интегрирован ИИ-анализ через OpenAI GPT-4
+Обновлено: исправлена проблема conflict с multiple instances
 """
 
 import asyncio
@@ -32,7 +32,7 @@ if TELEGRAM_AVAILABLE:
             ContextTypes
         )
         from telegram.constants import ParseMode
-        from telegram.error import TelegramError
+        from telegram.error import TelegramError, Conflict, NetworkError
     except ImportError as e:
         TELEGRAM_AVAILABLE = False
         telegram_import_error = str(e)
@@ -41,17 +41,18 @@ from config.settings import get_settings
 
 
 class TelegramBot:
-    """Телеграм бот для торгового бота с ИИ-анализом рынка"""
+    """Телеграм бот для торгового бота с ИИ-анализом рынка (исправлен conflict)"""
     
     def __init__(self, token: str, chat_id: str, websocket_manager=None, market_analyzer=None):
         self.token = token
         self.chat_id = chat_id
         self.websocket_manager = websocket_manager
-        self.market_analyzer = market_analyzer  # ИИ анализатор
+        self.market_analyzer = market_analyzer
         self.settings = get_settings()
         
         self.application = None
         self.is_running = False
+        self.is_starting = False  # Флаг для предотвращения множественного запуска
         
         self.logger = logging.getLogger(__name__)
         
@@ -71,12 +72,16 @@ class TelegramBot:
             "ai_analysis": True
         }
         
-        # Кулдаун для ИИ-анализа (защита от спама)
+        # Кулдаун для ИИ-анализа
         self.last_ai_analysis = None
         self.ai_analysis_in_progress = False
         
+        # Управление конфликтами
+        self.max_startup_retries = 3
+        self.startup_retry_delay = 5
+        
     async def start(self):
-        """Запуск телеграм бота"""
+        """Запуск телеграм бота с решением conflict проблемы"""
         if not TELEGRAM_AVAILABLE:
             self.logger.warning("⚠️ Telegram библиотека недоступна. Пропускаем запуск.")
             return
@@ -84,48 +89,154 @@ class TelegramBot:
         if not self.token or not self.chat_id:
             self.logger.warning("⚠️ TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID не указаны")
             return
+        
+        if self.is_starting or self.is_running:
+            self.logger.warning("⚠️ Telegram бот уже запускается или запущен")
+            return
             
+        self.is_starting = True
+        
         try:
-            self.logger.info("🤖 Запуск Telegram бота с ИИ-анализом...")
+            self.logger.info("🤖 Запуск Telegram бота с защитой от конфликтов...")
             self.logger.info(f"   Token: {self.token[:10]}...")
             self.logger.info(f"   Chat ID: {self.chat_id}")
-            self.logger.info(f"   ИИ-анализ: {'Включен' if self.market_analyzer else 'Отключен'}")
             
-            # Создание приложения
-            self.application = Application.builder().token(self.token).build()
+            # Очистка возможных конфликтующих соединений
+            await self._cleanup_existing_connections()
             
-            # Регистрация обработчиков
-            await self._register_handlers()
-            
-            # Установка команд меню
-            await self._set_bot_commands()
-            
-            # Запуск бота
-            await self.application.initialize()
-            await self.application.start()
-            await self.application.updater.start_polling()
+            # Попытки запуска с retry logic
+            for attempt in range(self.max_startup_retries):
+                try:
+                    await self._start_bot_instance()
+                    break
+                except Conflict as e:
+                    self.logger.warning(f"⚠️ Попытка {attempt + 1}: Конфликт соединений - {e}")
+                    if attempt < self.max_startup_retries - 1:
+                        self.logger.info(f"🔄 Ожидание {self.startup_retry_delay} сек перед повтором...")
+                        await asyncio.sleep(self.startup_retry_delay)
+                    else:
+                        raise
+                except Exception as e:
+                    self.logger.error(f"❌ Попытка {attempt + 1}: Ошибка запуска - {e}")
+                    if attempt < self.max_startup_retries - 1:
+                        await asyncio.sleep(self.startup_retry_delay)
+                    else:
+                        raise
             
             self.is_running = True
+            self.logger.info("✅ Telegram бот успешно запущен")
             
-            # Приветственное сообщение
-            await self.send_message(
+        except Exception as e:
+            self.logger.error(f"❌ Критическая ошибка запуска Telegram бота: {e}")
+            # Не поднимаем исключение, чтобы не сломать весь бот
+        finally:
+            self.is_starting = False
+    
+    async def _cleanup_existing_connections(self):
+        """Очистка существующих соединений"""
+        try:
+            self.logger.info("🧹 Очистка существующих Telegram соединений...")
+            
+            # Создаем временного бота для очистки
+            temp_app = Application.builder().token(self.token).build()
+            await temp_app.initialize()
+            
+            try:
+                # Получаем информацию о боте
+                bot_info = await temp_app.bot.get_me()
+                self.logger.info(f"🤖 Подключение к боту: @{bot_info.username}")
+                
+                # Удаляем webhook если есть
+                webhook_info = await temp_app.bot.get_webhook_info()
+                if webhook_info.url:
+                    self.logger.info(f"🔗 Удаляем webhook: {webhook_info.url}")
+                    await temp_app.bot.delete_webhook(drop_pending_updates=True)
+                
+                # Очищаем pending updates
+                self.logger.info("🗑️ Очистка pending updates...")
+                await temp_app.bot.get_updates(offset=-1, limit=1, timeout=1)
+                
+            except Exception as e:
+                self.logger.warning(f"⚠️ Ошибка при очистке: {e}")
+            finally:
+                await temp_app.shutdown()
+                
+        except Exception as e:
+            self.logger.warning(f"⚠️ Не удалось выполнить очистку: {e}")
+    
+    async def _start_bot_instance(self):
+        """Запуск экземпляра бота"""
+        # Создание приложения
+        self.application = Application.builder().token(self.token).build()
+        
+        # Регистрация обработчиков
+        await self._register_handlers()
+        
+        # Установка команд меню
+        await self._set_bot_commands()
+        
+        # Инициализация и запуск
+        await self.application.initialize()
+        await self.application.start()
+        
+        # Запуск polling с обработкой ошибок
+        await self.application.updater.start_polling(
+            drop_pending_updates=True,  # Игнорируем старые обновления
+            allowed_updates=Update.ALL_TYPES,
+            error_callback=self._handle_polling_error
+        )
+        
+        # Приветственное сообщение
+        await self._send_startup_message()
+    
+    async def _handle_polling_error(self, update: object, context) -> None:
+        """Обработчик ошибок polling"""
+        try:
+            exception = context.error
+            
+            if isinstance(exception, Conflict):
+                self.logger.error("❌ Конфликт Telegram соединений!")
+                self.logger.error("   Возможные причины:")
+                self.logger.error("   - Запущен другой экземпляр бота")
+                self.logger.error("   - Локальный бот конфликтует с Render")
+                self.logger.error("   - Не завершился предыдущий процесс")
+                
+                # Попытка переподключения через некоторое время
+                await asyncio.sleep(10)
+                
+            elif isinstance(exception, NetworkError):
+                self.logger.warning(f"⚠️ Сетевая ошибка: {exception}")
+                
+            else:
+                self.logger.error(f"❌ Ошибка polling: {exception}")
+                
+        except Exception as e:
+            self.logger.error(f"❌ Ошибка в обработчике ошибок: {e}")
+    
+    async def _send_startup_message(self):
+        """Отправка приветственного сообщения"""
+        try:
+            ai_status = "🤖 Включен" if self.market_analyzer and self.settings.is_openai_configured else "❌ Отключен"
+            
+            startup_text = (
                 "🚀 <b>Торговый бот с ИИ-анализом запущен!</b>\n\n"
                 f"📊 Пара: <code>{self.settings.TRADING_PAIR}</code>\n"
                 f"⏱ Таймфрейм: <code>{self.settings.STRATEGY_TIMEFRAME}</code>\n"
                 f"🎯 Стратегия: <b>RSI + MA</b>\n"
-                f"🤖 ИИ-анализ: <b>{'Включен' if self.market_analyzer else 'Отключен'}</b>\n\n"
-                "Нажмите кнопку ниже для получения ИИ-анализа рынка 👇",
+                f"🤖 ИИ-анализ: {ai_status}\n\n"
+                "Нажмите кнопку ниже для получения ИИ-анализа рынка 👇"
+            )
+            
+            await self.send_message(
+                startup_text,
                 reply_markup=self._get_main_keyboard()
             )
             
-            self.logger.info("✅ Telegram бот успешно запущен")
-            
         except Exception as e:
-            self.logger.error(f"❌ Ошибка запуска Telegram бота: {e}")
-            # Не поднимаем исключение, чтобы не сломать весь бот
+            self.logger.warning(f"⚠️ Не удалось отправить приветственное сообщение: {e}")
     
     async def stop(self):
-        """Остановка телеграм бота"""
+        """Остановка телеграм бота с правильной очисткой"""
         if not TELEGRAM_AVAILABLE or not self.application:
             return
             
@@ -134,12 +245,24 @@ class TelegramBot:
             
             self.is_running = False
             
-            if self.application:
-                await self.application.updater.stop()
-                await self.application.stop()
-                await self.application.shutdown()
+            # Отправляем сообщение об остановке
+            try:
+                await self.send_message("🛑 <b>Бот остановлен</b>\n\nСервис временно недоступен.")
+            except:
+                pass  # Игнорируем ошибки при отправке последнего сообщения
             
-            self.logger.info("✅ Telegram бот остановлен")
+            # Правильная остановка polling
+            if self.application.updater.running:
+                await self.application.updater.stop()
+            
+            # Остановка приложения
+            if self.application.running:
+                await self.application.stop()
+            
+            # Завершение
+            await self.application.shutdown()
+            
+            self.logger.info("✅ Telegram бот корректно остановлен")
             
         except Exception as e:
             self.logger.error(f"❌ Ошибка остановки Telegram бота: {e}")
@@ -161,6 +284,9 @@ class TelegramBot:
         
         # Обработчик текстовых сообщений
         self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
+        
+        # Обработчик ошибок
+        self.application.add_error_handler(self._handle_polling_error)
     
     async def _set_bot_commands(self):
         """Установка команд в меню бота"""
@@ -200,7 +326,7 @@ class TelegramBot:
         
         return InlineKeyboardMarkup(keyboard)
     
-    # Обработчики команд
+    # Обработчики команд (остаются теми же)
     async def _cmd_start(self, update, context):
         """Команда /start"""
         ai_status = "🤖 Включен" if self.market_analyzer and self.settings.is_openai_configured else "❌ Отключен"
@@ -511,8 +637,8 @@ class TelegramBot:
             self.logger.error(f"❌ Ошибка отправки уведомления: {e}")
     
     async def send_message(self, text: str, reply_markup=None, chat_id: Optional[int] = None):
-        """Отправка сообщения в чат"""
-        if not TELEGRAM_AVAILABLE or not self.application:
+        """Отправка сообщения в чат с обработкой ошибок"""
+        if not TELEGRAM_AVAILABLE or not self.application or not self.is_running:
             self.logger.info(f"📤 [Telegram недоступен] {text[:100]}...")
             return
             
@@ -525,6 +651,8 @@ class TelegramBot:
                 parse_mode=ParseMode.HTML,
                 reply_markup=reply_markup
             )
+        except Conflict as e:
+            self.logger.error(f"❌ Конфликт при отправке сообщения: {e}")
         except Exception as e:
             self.logger.error(f"❌ Ошибка отправки сообщения Telegram: {e}")
     
@@ -532,11 +660,13 @@ class TelegramBot:
         """Получить статус телеграм бота"""
         return {
             "is_running": self.is_running,
+            "is_starting": self.is_starting,
             "telegram_available": TELEGRAM_AVAILABLE,
             "ai_analyzer_available": self.market_analyzer is not None,
             "openai_configured": self.settings.is_openai_configured,
             "ai_analysis_in_progress": self.ai_analysis_in_progress,
             "last_ai_analysis": self.last_ai_analysis.isoformat() if self.last_ai_analysis else None,
             "notifications_enabled": self.notifications_enabled,
-            "user_settings": self.user_settings
+            "user_settings": self.user_settings,
+            "max_startup_retries": self.max_startup_retries
         }
