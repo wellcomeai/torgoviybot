@@ -4,14 +4,10 @@ services:
     env: python
     plan: free
     buildCommand: |
-      python --version
-      pip install --upgrade pip==23.3.1
-      pip install setuptools==68.2.2 wheel==0.41.2
-      pip install -r requirements.txt --no-cache-dir
+      pip install --upgrade pip
+      pip install -r requirements.txt --no-cache-dir --only-binary=all || pip install -r requirements.txt --no-cache-dir
     startCommand: python main.py
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.7
       - key: BYBIT_WS_TESTNET
         value: true
       - key: TRADING_PAIR
