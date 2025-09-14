@@ -1,10 +1,10 @@
 services:
   - type: web
-    name: bybit-trading-bot
+    name: bybit-trading-bot-ai
     env: python
     plan: free
     buildCommand: |
-      echo "🚀 Building without Pydantic..."
+      echo "🚀 Building Bybit Trading Bot with AI Analysis..."
       pip install --upgrade pip
       pip install -r requirements.txt --only-binary=all --no-cache-dir
     startCommand: python main.py
@@ -17,4 +17,24 @@ services:
         value: 5m
       - key: DEBUG
         value: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4
+      - key: OPENAI_MAX_TOKENS
+        value: 2000
+      - key: OPENAI_TEMPERATURE
+        value: 0.3
+      - key: AI_ANALYSIS_ENABLED
+        value: true
+      - key: AI_KLINES_COUNT
+        value: 50
+      - key: AI_ORDERBOOK_LEVELS
+        value: 10
+      - key: AI_TRADES_COUNT
+        value: 100
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
     healthCheckPath: /health
