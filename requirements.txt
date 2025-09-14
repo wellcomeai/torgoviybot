@@ -13,5 +13,5 @@ httpx==0.27.0
 # Basic utilities - только самое необходимое
 python-dotenv==1.0.1
 
-# Если Telegram нужен - включим отдельно после тестирования
-# python-telegram-bot==21.0.1
+
+python-telegram-bot==21.0.1
