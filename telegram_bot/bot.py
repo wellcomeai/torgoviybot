@@ -1,11 +1,11 @@
 """
-Телеграм бот для торговых уведомлений и управления
-Обработка команд, кнопок и отправка сигналов (исправленная детекция)
+Телеграм бот для торговых уведомлений и ИИ-анализа рынка
+Обновлено: интегрирован ИИ-анализ через OpenAI GPT-4
 """
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 import html
 import json
@@ -41,12 +41,13 @@ from config.settings import get_settings
 
 
 class TelegramBot:
-    """Телеграм бот для торгового бота (исправленная детекция)"""
+    """Телеграм бот для торгового бота с ИИ-анализом рынка"""
     
-    def __init__(self, token: str, chat_id: str, websocket_manager=None):
+    def __init__(self, token: str, chat_id: str, websocket_manager=None, market_analyzer=None):
         self.token = token
         self.chat_id = chat_id
         self.websocket_manager = websocket_manager
+        self.market_analyzer = market_analyzer  # ИИ анализатор
         self.settings = get_settings()
         
         self.application = None
@@ -66,8 +67,13 @@ class TelegramBot:
         self.user_settings = {
             "notifications": True,
             "signal_types": ["BUY", "SELL"],
-            "min_confidence": 0.7
+            "min_confidence": 0.7,
+            "ai_analysis": True
         }
+        
+        # Кулдаун для ИИ-анализа (защита от спама)
+        self.last_ai_analysis = None
+        self.ai_analysis_in_progress = False
         
     async def start(self):
         """Запуск телеграм бота"""
@@ -80,9 +86,10 @@ class TelegramBot:
             return
             
         try:
-            self.logger.info("🤖 Запуск Telegram бота...")
+            self.logger.info("🤖 Запуск Telegram бота с ИИ-анализом...")
             self.logger.info(f"   Token: {self.token[:10]}...")
             self.logger.info(f"   Chat ID: {self.chat_id}")
+            self.logger.info(f"   ИИ-анализ: {'Включен' if self.market_analyzer else 'Отключен'}")
             
             # Создание приложения
             self.application = Application.builder().token(self.token).build()
@@ -102,11 +109,12 @@ class TelegramBot:
             
             # Приветственное сообщение
             await self.send_message(
-                "🚀 <b>Торговый бот запущен!</b>\n\n"
-                f"📊 Пара: {self.settings.TRADING_PAIR}\n"
-                f"⏱ Таймфрейм: {self.settings.STRATEGY_TIMEFRAME}\n"
-                f"🎯 Стратегия: RSI + MA\n\n"
-                "Используйте /help для списка команд",
+                "🚀 <b>Торговый бот с ИИ-анализом запущен!</b>\n\n"
+                f"📊 Пара: <code>{self.settings.TRADING_PAIR}</code>\n"
+                f"⏱ Таймфрейм: <code>{self.settings.STRATEGY_TIMEFRAME}</code>\n"
+                f"🎯 Стратегия: <b>RSI + MA</b>\n"
+                f"🤖 ИИ-анализ: <b>{'Включен' if self.market_analyzer else 'Отключен'}</b>\n\n"
+                "Нажмите кнопку ниже для получения ИИ-анализа рынка 👇",
                 reply_markup=self._get_main_keyboard()
             )
             
@@ -141,14 +149,12 @@ class TelegramBot:
         if not self.application:
             return
             
-        # Команды
+        # Основные команды
         self.application.add_handler(CommandHandler("start", self._cmd_start))
         self.application.add_handler(CommandHandler("help", self._cmd_help))
         self.application.add_handler(CommandHandler("status", self._cmd_status))
-        self.application.add_handler(CommandHandler("market", self._cmd_market))
-        self.application.add_handler(CommandHandler("signals", self._cmd_signals))
-        self.application.add_handler(CommandHandler("settings", self._cmd_settings))
-        self.application.add_handler(CommandHandler("strategy", self._cmd_strategy))
+        self.application.add_handler(CommandHandler("market", self._cmd_market_analysis))
+        self.application.add_handler(CommandHandler("ai", self._cmd_market_analysis))
         
         # Обработчики кнопок
         self.application.add_handler(CallbackQueryHandler(self._handle_callback))
@@ -165,65 +171,47 @@ class TelegramBot:
             BotCommand("start", "🚀 Запуск бота"),
             BotCommand("help", "❓ Помощь"),
             BotCommand("status", "📊 Статус бота"),
-            BotCommand("market", "📈 Рыночные данные"),
-            BotCommand("signals", "🎯 Последние сигналы"),
-            BotCommand("settings", "⚙️ Настройки"),
-            BotCommand("strategy", "📊 Статус стратегии")
+            BotCommand("market", "🤖 ИИ-анализ рынка"),
+            BotCommand("ai", "🤖 ИИ-анализ рынка")
         ]
         
         await self.application.bot.set_my_commands(commands)
     
     def _get_main_keyboard(self):
-        """Основная клавиатура"""
+        """Основная клавиатура - ТОЛЬКО кнопка анализа рынка"""
         if not TELEGRAM_AVAILABLE:
             return None
-            
-        keyboard = [
-            [
-                InlineKeyboardButton("📈 Узнать рынок", callback_data="market_info"),
-                InlineKeyboardButton("📊 Статус", callback_data="bot_status")
-            ],
-            [
-                InlineKeyboardButton("🎯 Сигналы", callback_data="recent_signals"),
-                InlineKeyboardButton("📊 Стратегия", callback_data="strategy_status")
-            ],
-            [
-                InlineKeyboardButton("⚙️ Настройки", callback_data="settings"),
-                InlineKeyboardButton("❓ Помощь", callback_data="help")
-            ]
-        ]
-        return InlineKeyboardMarkup(keyboard)
-    
-    def _get_settings_keyboard(self):
-        """Клавиатура настроек"""
-        if not TELEGRAM_AVAILABLE:
-            return None
-            
-        notifications_text = "🔔 Вкл" if self.user_settings["notifications"] else "🔕 Выкл"
+        
+        # Проверяем доступность ИИ-анализа
+        ai_available = self.market_analyzer and self.settings.is_openai_configured
+        button_text = "🤖 Узнать рынок (ИИ)" if ai_available else "📈 Узнать рынок (базовый)"
         
         keyboard = [
             [
-                InlineKeyboardButton(f"Уведомления: {notifications_text}", callback_data="toggle_notifications")
-            ],
-            [
-                InlineKeyboardButton("📊 Типы сигналов", callback_data="signal_types"),
-                InlineKeyboardButton("🎯 Мин. уверенность", callback_data="min_confidence")
-            ],
-            [
-                InlineKeyboardButton("⬅️ Назад", callback_data="main_menu")
+                InlineKeyboardButton(button_text, callback_data="ai_market_analysis")
             ]
         ]
+        
+        # Если ИИ недоступен, добавляем информацию
+        if not ai_available:
+            keyboard.append([
+                InlineKeyboardButton("ℹ️ Настроить ИИ", callback_data="ai_setup_info")
+            ])
+        
         return InlineKeyboardMarkup(keyboard)
     
     # Обработчики команд
     async def _cmd_start(self, update, context):
         """Команда /start"""
+        ai_status = "🤖 Включен" if self.market_analyzer and self.settings.is_openai_configured else "❌ Отключен"
+        
         await update.message.reply_text(
-            "🚀 <b>Добро пожаловать в торговый бот Bybit!</b>\n\n"
+            "🚀 <b>Добро пожаловать в торговый бот с ИИ-анализом!</b>\n\n"
             f"📊 Торговая пара: <code>{self.settings.TRADING_PAIR}</code>\n"
             f"⏱ Таймфрейм: <code>{self.settings.STRATEGY_TIMEFRAME}</code>\n"
-            f"🎯 Стратегия: <b>RSI + Moving Average</b>\n\n"
-            "Бот отправляет торговые сигналы на основе технического анализа.",
+            f"🎯 Стратегия: <b>RSI + Moving Average</b>\n"
+            f"🤖 ИИ-анализ GPT-4: {ai_status}\n\n"
+            "Нажмите кнопку ниже для получения профессионального анализа рынка от ИИ 👇",
             parse_mode=ParseMode.HTML,
             reply_markup=self._get_main_keyboard()
         )
@@ -233,24 +221,35 @@ class TelegramBot:
         help_text = """
 🆘 <b>Помощь по боту</b>
 
-<b>Команды:</b>
+<b>Основные команды:</b>
 /start - Запуск бота
 /help - Эта справка  
 /status - Статус бота
-/market - Рыночные данные
-/signals - Последние сигналы
+/market - ИИ-анализ рынка
+/ai - ИИ-анализ рынка
 
-<b>Торговые сигналы:</b>
-• 🟢 <b>BUY</b> - Сигнал на покупку
-• 🔴 <b>SELL</b> - Сигнал на продажу
+<b>🤖 ИИ-анализ включает:</b>
+- 📊 Технический анализ всех индикаторов
+- 🎯 Конкретные уровни входа, TP и SL
+- 📈 Прогнозы на разные временные горизонты
+- ⚠️ Оценка рисков и возможностей
+- 💡 Профессиональные рекомендации
 
-⚠️ <b>Важно:</b> Сигналы носят информационный характер!
+<b>🔗 Источники данных:</b>
+- Свечи, объемы, индикаторы
+- Ордербук и активность трейдеров
+- Анализ через GPT-4
+
+⚠️ <b>Важно:</b> ИИ-анализ носит информационный характер!
         """
         
         await update.message.reply_text(help_text, parse_mode=ParseMode.HTML)
     
     async def _cmd_status(self, update, context):
         """Команда /status"""
+        ai_status = "🟢 Работает" if self.market_analyzer and self.settings.is_openai_configured else "🔴 Отключен"
+        ai_model = self.settings.OPENAI_MODEL if self.settings.is_openai_configured else "Не настроен"
+        
         status_text = f"""
 📊 <b>Статус бота</b>
 
@@ -261,120 +260,19 @@ class TelegramBot:
 
 <b>WebSocket:</b> {'🟢 Подключен' if self.websocket_manager and self.websocket_manager.is_connected else '🔴 Отключен'}
 
+<b>🤖 ИИ-анализ:</b>
+Статус: {ai_status}
+Модель: <code>{ai_model}</code>
+Анализ в процессе: {'🔄 Да' if self.ai_analysis_in_progress else '✅ Нет'}
+
 <i>Обновлено: {datetime.now().strftime('%H:%M:%S')}</i>
         """
         
         await update.message.reply_text(status_text, parse_mode=ParseMode.HTML)
     
-    async def _cmd_market(self, update, context):
-        """Команда /market"""
-        try:
-            if self.websocket_manager:
-                market_data = self.websocket_manager.get_market_data()
-                if market_data:
-                    trend_emoji = {"bullish": "📈", "bearish": "📉", "sideways": "➡️"}.get(market_data.get("trend", "sideways"), "➡️")
-                    
-                    text = f"""
-📈 <b>Рыночные данные - {market_data.get('symbol', 'N/A')}</b>
-
-💰 <b>Цена:</b> <code>${market_data.get('price', 'N/A')}</code>
-📊 <b>Изменение 24ч:</b> <code>{market_data.get('change_24h', 'N/A')}</code>
-📈 <b>Макс 24ч:</b> <code>${market_data.get('high_24h', 'N/A')}</code>
-📉 <b>Мин 24ч:</b> <code>${market_data.get('low_24h', 'N/A')}</code>
-💹 <b>Объем 24ч:</b> <code>{market_data.get('volume_24h', 'N/A')}</code>
-
-{trend_emoji} <b>Тренд:</b> {market_data.get('trend', 'N/A').title()}
-
-<i>🕐 Обновлено: {datetime.now().strftime('%H:%M:%S')}</i>
-                    """
-                    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
-                    return
-            
-            await update.message.reply_text("❌ Рыночные данные временно недоступны")
-        except Exception as e:
-            await update.message.reply_text(f"❌ Ошибка получения данных: {e}")
-    
-    async def _cmd_signals(self, update, context):
-        """Команда /signals"""
-        try:
-            if self.websocket_manager and self.websocket_manager.strategy:
-                signals = self.websocket_manager.strategy.get_recent_signals(limit=5)
-                
-                if signals:
-                    text = "🎯 <b>Последние торговые сигналы:</b>\n\n"
-                    
-                    for i, signal in enumerate(reversed(signals), 1):
-                        signal_emoji = "🟢" if signal['signal_type'] == "BUY" else "🔴"
-                        confidence_percent = signal['confidence'] * 100
-                        
-                        signal_time = datetime.fromisoformat(signal['timestamp'].replace('Z', '+00:00')) if isinstance(signal['timestamp'], str) else signal['timestamp']
-                        time_str = signal_time.strftime('%H:%M:%S')
-                        
-                        text += f"{i}. {signal_emoji} <b>{signal['signal_type']}</b> @ <code>${signal['price']:.4f}</code>\n"
-                        text += f"   🎯 Уверенность: <b>{confidence_percent:.1f}%</b>\n"
-                        text += f"   ⏰ Время: {time_str}\n\n"
-                    
-                    text += f"<i>Всего сигналов: {len(signals)}</i>"
-                    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
-                    return
-            
-            await update.message.reply_text("📭 <b>Нет недавних сигналов</b>\n\nСигналы появятся после анализа рыночных данных.", parse_mode=ParseMode.HTML)
-        except Exception as e:
-            await update.message.reply_text(f"❌ Ошибка получения сигналов: {e}")
-    
-    async def _cmd_settings(self, update, context):
-        """Команда /settings"""
-        settings_text = f"""
-⚙️ <b>Настройки бота</b>
-
-<b>Уведомления:</b> {'🔔 Включены' if self.user_settings['notifications'] else '🔕 Отключены'}
-<b>Типы сигналов:</b> {', '.join(self.user_settings['signal_types'])}
-<b>Мин. уверенность:</b> {self.user_settings['min_confidence']:.0%}
-
-Используйте кнопки ниже для изменения настроек:
-        """
-        
-        await update.message.reply_text(
-            settings_text,
-            parse_mode=ParseMode.HTML,
-            reply_markup=self._get_settings_keyboard()
-        )
-    
-    async def _cmd_strategy(self, update, context):
-        """Команда /strategy"""
-        try:
-            if self.websocket_manager and self.websocket_manager.strategy:
-                status = self.websocket_manager.strategy.get_status()
-                current_data = self.websocket_manager.strategy.get_current_data()
-                indicators = current_data.get('current_indicators', {})
-                
-                text = f"""
-📊 <b>Статус стратегии</b>
-
-<b>Основное:</b>
-Стратегия: {status['strategy_name']}
-Пара: <code>{status['symbol']}</code>
-Таймфрейм: <code>{status['timeframe']}</code>
-Статус: {'🟢 Активна' if status['is_active'] else '🔴 Неактивна'}
-
-<b>Данные:</b>
-Точек данных: {status['data_points']}
-Всего сигналов: {status['total_signals']}
-Сигналов сегодня: {status['signals_today']}
-
-<b>Текущие индикаторы:</b>
-RSI: <code>{indicators.get('rsi', 0):.1f}</code>
-MA короткая: <code>{indicators.get('sma_short', 0):.2f}</code>
-MA длинная: <code>{indicators.get('sma_long', 0):.2f}</code>
-
-<i>Обновлено: {datetime.now().strftime('%H:%M:%S')}</i>
-                """
-                await update.message.reply_text(text, parse_mode=ParseMode.HTML)
-                return
-            
-            await update.message.reply_text("❌ Стратегия не инициализирована")
-        except Exception as e:
-            await update.message.reply_text(f"❌ Ошибка получения статуса стратегии: {e}")
+    async def _cmd_market_analysis(self, update, context):
+        """Команда /market или /ai - запуск ИИ-анализа"""
+        await self._perform_ai_market_analysis(update.message.chat_id)
     
     async def _handle_callback(self, update, context):
         """Обработка нажатий на кнопки"""
@@ -383,40 +281,192 @@ MA длинная: <code>{indicators.get('sma_long', 0):.2f}</code>
         
         data = query.data
         
-        if data == "toggle_notifications":
-            self.user_settings["notifications"] = not self.user_settings["notifications"]
-            status = "включены" if self.user_settings["notifications"] else "отключены"
+        if data == "ai_market_analysis":
+            # Основная кнопка - ИИ-анализ рынка
+            await self._perform_ai_market_analysis(query.message.chat_id, query.message.message_id)
+            
+        elif data == "ai_setup_info":
+            # Информация о настройке ИИ
+            setup_text = """
+🤖 <b>Настройка ИИ-анализа</b>
+
+Для включения ИИ-анализа необходимо:
+
+1️⃣ Получить API ключ OpenAI:
+   • Перейти на platform.openai.com
+   • Создать аккаунт и получить API key
+   • Пополнить баланс
+
+2️⃣ Добавить в переменные окружения:
+   <code>OPENAI_API_KEY=sk-your_key_here</code>
+
+3️⃣ Перезапустить бота
+
+<b>💰 Стоимость:</b>
+- GPT-4: ~$0.03-0.06 за анализ
+- GPT-3.5: ~$0.002-0.004 за анализ
+
+<b>🎯 Что получите:</b>
+- Профессиональный технический анализ
+- Конкретные уровни входа и выхода
+- Take Profit и Stop Loss рекомендации
+- Прогнозы на разные временные горизонты
+            """
             
             await query.edit_message_text(
-                f"⚙️ <b>Настройки бота</b>\n\n"
-                f"✅ Уведомления {status}!\n\n"
-                f"<b>Уведомления:</b> {'🔔 Включены' if self.user_settings['notifications'] else '🔕 Отключены'}",
+                setup_text,
                 parse_mode=ParseMode.HTML,
-                reply_markup=self._get_settings_keyboard()
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("⬅️ Назад", callback_data="back_to_main")
+                ]])
             )
-        else:
-            await query.edit_message_text("🔄 Функция в разработке")
+            
+        elif data == "back_to_main":
+            # Возврат к главному меню
+            await query.edit_message_text(
+                "🤖 <b>Торговый бот готов к работе!</b>\n\n"
+                "Нажмите кнопку ниже для получения ИИ-анализа рынка 👇",
+                parse_mode=ParseMode.HTML,
+                reply_markup=self._get_main_keyboard()
+            )
     
     async def _handle_message(self, update, context):
         """Обработка текстовых сообщений"""
         text = update.message.text.lower()
         
-        if "статус" in text or "status" in text:
+        if any(keyword in text for keyword in ["анализ", "рынок", "market", "analysis", "ии", "ai", "гпт", "gpt"]):
+            await self._perform_ai_market_analysis(update.message.chat_id)
+        elif "статус" in text or "status" in text:
             await self._cmd_status(update, context)
-        elif "рынок" in text or "market" in text:
-            await self._cmd_market(update, context)
-        elif "сигнал" in text or "signal" in text:
-            await self._cmd_signals(update, context)
         else:
             await update.message.reply_text(
-                "🤔 Используйте /help для справки или команды:\n"
-                "/status - статус бота\n"
-                "/market - рыночные данные\n"
-                "/signals - последние сигналы",
+                "🤖 <b>Для получения ИИ-анализа рынка:</b>\n\n"
+                "• Нажмите кнопку ниже\n"
+                "• Или отправьте /market\n"
+                "• Или напишите 'анализ рынка'\n\n"
+                "Используйте /help для полной справки",
+                parse_mode=ParseMode.HTML,
                 reply_markup=self._get_main_keyboard()
             )
     
-    # Отправка уведомлений
+    async def _perform_ai_market_analysis(self, chat_id: int, message_id: Optional[int] = None):
+        """Выполнение ИИ-анализа рынка"""
+        try:
+            # Проверка кулдауна
+            if self._is_analysis_cooldown():
+                await self.send_message(
+                    f"⏳ <b>Анализ выполняется слишком часто</b>\n\n"
+                    f"Подождите {self.settings.AI_ANALYSIS_COOLDOWN_MINUTES} минут между запросами",
+                    chat_id=chat_id
+                )
+                return
+            
+            # Проверка, что анализ не выполняется
+            if self.ai_analysis_in_progress:
+                await self.send_message(
+                    "🔄 <b>Анализ уже выполняется</b>\n\nПодождите завершения текущего анализа...",
+                    chat_id=chat_id
+                )
+                return
+            
+            # Проверка доступности компонентов
+            if not self.market_analyzer:
+                await self.send_message(
+                    "❌ <b>ИИ-анализатор не инициализирован</b>\n\n"
+                    "Проверьте настройки OPENAI_API_KEY и перезапустите бота",
+                    chat_id=chat_id
+                )
+                return
+            
+            if not self.settings.is_openai_configured:
+                await self.send_message(
+                    "❌ <b>OpenAI не настроен</b>\n\n"
+                    "Добавьте OPENAI_API_KEY в переменные окружения:\n"
+                    "<code>OPENAI_API_KEY=sk-your_key_here</code>\n\n"
+                    "Получить ключ: https://platform.openai.com",
+                    parse_mode=ParseMode.HTML,
+                    chat_id=chat_id
+                )
+                return
+            
+            # Начинаем анализ
+            self.ai_analysis_in_progress = True
+            self.last_ai_analysis = datetime.now()
+            
+            # Отправляем сообщение о начале анализа
+            await self.send_message(
+                "🤖 <b>Запуск ИИ-анализа рынка...</b>\n\n"
+                "🔍 Собираю рыночные данные...\n"
+                "📊 Анализирую индикаторы...\n"
+                "🧠 Отправляю в GPT-4...\n\n"
+                "⏳ Это может занять 10-30 секунд",
+                chat_id=chat_id
+            )
+            
+            # Выполняем анализ
+            market_data, ai_analysis = await self.market_analyzer.analyze_market(self.settings.TRADING_PAIR)
+            
+            # Проверяем результаты
+            if not market_data and not ai_analysis:
+                await self.send_message(
+                    "❌ <b>Не удалось выполнить анализ</b>\n\n"
+                    "Возможные причины:\n"
+                    "• Нет подключения к рынку\n"
+                    "• Проблемы с OpenAI API\n"
+                    "• Неверный API ключ\n\n"
+                    "Попробуйте позже или проверьте настройки",
+                    chat_id=chat_id
+                )
+                return
+            
+            # Отправляем рыночные данные (первое сообщение)
+            if market_data:
+                market_message = self.market_analyzer.format_market_data_message(market_data)
+                await self.send_message(market_message, chat_id=chat_id)
+            
+            # Отправляем ИИ-анализ (второе сообщение)
+            if ai_analysis and not ai_analysis.startswith("❌"):
+                analysis_message = f"🤖 <b>ИИ-АНАЛИЗ РЫНКА (GPT-4)</b>\n\n{ai_analysis}"
+                await self.send_message(analysis_message, chat_id=chat_id)
+                
+                # Добавляем кнопку для повторного анализа
+                await self.send_message(
+                    "✅ <b>Анализ завершен!</b>\n\n"
+                    "Для получения нового анализа нажмите кнопку ниже 👇",
+                    reply_markup=self._get_main_keyboard(),
+                    chat_id=chat_id
+                )
+            else:
+                # Ошибка в анализе
+                error_message = ai_analysis if ai_analysis else "❌ Не удалось получить ИИ-анализ"
+                await self.send_message(error_message, chat_id=chat_id)
+            
+            self.logger.info(f"✅ ИИ-анализ рынка завершен для чата {chat_id}")
+            
+        except Exception as e:
+            self.logger.error(f"❌ Ошибка выполнения ИИ-анализа: {e}")
+            await self.send_message(
+                f"❌ <b>Ошибка анализа</b>\n\n"
+                f"Произошла неожиданная ошибка:\n"
+                f"<code>{str(e)}</code>\n\n"
+                f"Попробуйте позже или обратитесь к администратору",
+                parse_mode=ParseMode.HTML,
+                chat_id=chat_id
+            )
+        finally:
+            self.ai_analysis_in_progress = False
+    
+    def _is_analysis_cooldown(self) -> bool:
+        """Проверка кулдауна для ИИ-анализа"""
+        if not self.last_ai_analysis or self.settings.AI_ANALYSIS_COOLDOWN_MINUTES == 0:
+            return False
+        
+        cooldown_minutes = self.settings.AI_ANALYSIS_COOLDOWN_MINUTES
+        time_diff = datetime.now() - self.last_ai_analysis
+        
+        return time_diff < timedelta(minutes=cooldown_minutes)
+    
+    # Отправка уведомлений о торговых сигналах
     async def send_signal_notification(self, signal_data: dict):
         """Отправка уведомления о торговом сигнале"""
         if not TELEGRAM_AVAILABLE or not self.is_running:
@@ -436,7 +486,7 @@ MA длинная: <code>{indicators.get('sma_long', 0):.2f}</code>
             if confidence < self.user_settings["min_confidence"]:
                 return
             
-            # Форматируем сообщение
+            # Форматируем сообщение о сигнале
             signal_emoji = "🟢" if signal_type == "BUY" else "🔴" if signal_type == "SELL" else "🔵"
             confidence_stars = "⭐" * min(5, int(confidence * 5))
             
@@ -460,18 +510,33 @@ MA длинная: <code>{indicators.get('sma_long', 0):.2f}</code>
         except Exception as e:
             self.logger.error(f"❌ Ошибка отправки уведомления: {e}")
     
-    async def send_message(self, text: str, reply_markup=None):
+    async def send_message(self, text: str, reply_markup=None, chat_id: Optional[int] = None):
         """Отправка сообщения в чат"""
         if not TELEGRAM_AVAILABLE or not self.application:
             self.logger.info(f"📤 [Telegram недоступен] {text[:100]}...")
             return
             
         try:
+            target_chat_id = chat_id or self.chat_id
+            
             await self.application.bot.send_message(
-                chat_id=self.chat_id,
+                chat_id=target_chat_id,
                 text=text,
                 parse_mode=ParseMode.HTML,
                 reply_markup=reply_markup
             )
         except Exception as e:
             self.logger.error(f"❌ Ошибка отправки сообщения Telegram: {e}")
+    
+    def get_bot_status(self) -> dict:
+        """Получить статус телеграм бота"""
+        return {
+            "is_running": self.is_running,
+            "telegram_available": TELEGRAM_AVAILABLE,
+            "ai_analyzer_available": self.market_analyzer is not None,
+            "openai_configured": self.settings.is_openai_configured,
+            "ai_analysis_in_progress": self.ai_analysis_in_progress,
+            "last_ai_analysis": self.last_ai_analysis.isoformat() if self.last_ai_analysis else None,
+            "notifications_enabled": self.notifications_enabled,
+            "user_settings": self.user_settings
+        }
