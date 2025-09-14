@@ -1,6 +1,6 @@
 """
 Главный файл торгового бота для Bybit
-Веб-сервис для деплоя на Render
+Веб-сервис для деплоя на Render (БЕЗ Pydantic)
 """
 
 import asyncio
@@ -30,7 +30,6 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler()  # Только console для Render
-        # logging.FileHandler('bot.log')  # Файл логов может вызывать проблемы на Render
     ]
 )
 
@@ -62,7 +61,7 @@ bot_manager = BotManager()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Управление жизненным циклом приложения"""
-    logger.info("🚀 Запуск торгового бота...")
+    logger.info("🚀 Запуск торгового бота (БЕЗ Pydantic)...")
     
     # Инициализация компонентов при запуске
     await initialize_bot()
@@ -76,7 +75,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Bybit Trading Bot",
-    description="Торговый бот для фьючерсов Bybit с телеграм уведомлениями",
+    description="Торговый бот для фьючерсов Bybit с телеграм уведомлениями (БЕЗ Pydantic)",
     version="1.0.0",
     lifespan=lifespan
 )
@@ -89,7 +88,7 @@ async def initialize_bot():
         
         # Загрузка настроек
         bot_manager.settings = get_settings()
-        logger.info(f"✅ Настройки загружены")
+        logger.info(f"✅ Настройки загружены (БЕЗ Pydantic)")
         
         # Инициализация стратегии
         bot_manager.strategy = BaseStrategy(
@@ -179,7 +178,7 @@ async def on_trading_signal(signal_data: dict):
 async def root():
     """Главная страница"""
     return {
-        "message": "Bybit Trading Bot API",
+        "message": "Bybit Trading Bot API (БЕЗ Pydantic)",
         "status": "running" if bot_manager.status["is_running"] else "stopped",
         "version": "1.0.0",
         "timestamp": datetime.now().isoformat(),
@@ -335,7 +334,7 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     host = "0.0.0.0"
     
-    logger.info(f"🚀 Запуск сервера на {host}:{port}")
+    logger.info(f"🚀 Запуск сервера на {host}:{port} (БЕЗ Pydantic)")
     
     uvicorn.run(
         "main:app",
