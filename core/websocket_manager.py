@@ -1,7 +1,7 @@
 """
 WebSocket менеджер для подключения к Bybit
 Обработка потоков данных и управление соединением
-Обновлено: добавлен метод get_comprehensive_market_data() для ИИ-анализа
+Обновлено: детальное логирование для диагностики проблем с данными
 """
 
 import asyncio
@@ -39,10 +39,10 @@ class WebSocketManager:
         self.trade_data = []
         
         # Расширенное хранение для ИИ-анализа
-        self.extended_kline_data = []  # Больше свечей для анализа
-        self.extended_orderbook_history = []  # История изменений ордербука
-        self.volume_profile = {}  # Профиль объема
-        self.price_levels = {"support": [], "resistance": []}  # Уровни поддержки/сопротивления
+        self.extended_kline_data = []
+        self.extended_orderbook_history = []
+        self.volume_profile = {}
+        self.price_levels = {"support": [], "resistance": []}
         
         # Задачи asyncio
         self.ping_task = None
@@ -52,41 +52,55 @@ class WebSocketManager:
         # Лимиты данных
         self.max_klines = self.settings.KLINE_LIMIT
         self.max_trades = 1000
-        self.max_extended_klines = self.settings.AI_KLINES_COUNT  # Для ИИ-анализа
-        self.max_orderbook_history = 50  # История ордербука
+        self.max_extended_klines = self.settings.AI_KLINES_COUNT
+        self.max_orderbook_history = 50
+        
+        # Счетчики для диагностики
+        self.message_counts = {
+            "total": 0,
+            "ticker": 0,
+            "kline": 0,
+            "orderbook": 0,
+            "trade": 0,
+            "ping": 0,
+            "subscribe": 0,
+            "unknown": 0
+        }
         
         self.logger = logging.getLogger(__name__)
+        self.logger.info(f"WebSocket Manager инициализирован для {symbol}")
         
     async def start(self):
         """Запуск WebSocket соединения"""
         try:
-            self.logger.info(f"🔌 Подключение к Bybit WebSocket...")
+            self.logger.info(f"Подключение к Bybit WebSocket...")
             self.logger.info(f"   URL: {self.settings.websocket_url}")
             self.logger.info(f"   Символ: {self.symbol}")
-            self.logger.info(f"   Расширенный сбор данных для ИИ: включен")
+            self.logger.info(f"   Таймфрейм: {self.settings.STRATEGY_TIMEFRAME}")
             
             # Запуск основной задачи
             self.main_task = asyncio.create_task(self._main_loop())
             
             # Ждем установления соединения
-            for _ in range(10):  # 10 секунд максимум
+            for attempt in range(10):
                 if self.is_connected:
                     break
                 await asyncio.sleep(1)
+                self.logger.info(f"Ожидание подключения... попытка {attempt + 1}/10")
             
             if not self.is_connected:
                 raise Exception("Не удалось установить соединение в течение 10 секунд")
             
-            self.logger.info("✅ WebSocket соединение установлено")
+            self.logger.info("WebSocket соединение установлено")
             
         except Exception as e:
-            self.logger.error(f"❌ Ошибка запуска WebSocket: {e}")
+            self.logger.error(f"Ошибка запуска WebSocket: {e}")
             raise
     
     async def stop(self):
         """Остановка WebSocket соединения"""
         try:
-            self.logger.info("🛑 Остановка WebSocket соединения...")
+            self.logger.info("Остановка WebSocket соединения...")
             
             self.is_connected = False
             
@@ -104,10 +118,10 @@ class WebSocketManager:
             if self.websocket:
                 await self.websocket.close()
                 
-            self.logger.info("✅ WebSocket соединение закрыто")
+            self.logger.info("WebSocket соединение закрыто")
             
         except Exception as e:
-            self.logger.error(f"❌ Ошибка закрытия WebSocket: {e}")
+            self.logger.error(f"Ошибка закрытия WebSocket: {e}")
     
     async def _main_loop(self):
         """Основной цикл WebSocket соединения"""
@@ -117,32 +131,34 @@ class WebSocketManager:
                 await self._listen_messages()
                 
             except Exception as e:
-                self.logger.error(f"❌ Ошибка в главном цикле WebSocket: {e}")
+                self.logger.error(f"Ошибка в главном цикле WebSocket: {e}")
                 self.is_connected = False
                 
                 if self.reconnect_count < self.settings.WS_RECONNECT_ATTEMPTS:
                     self.reconnect_count += 1
                     delay = self.settings.WS_RECONNECT_DELAY * self.reconnect_count
-                    self.logger.info(f"🔄 Переподключение через {delay} сек (попытка {self.reconnect_count})")
+                    self.logger.info(f"Переподключение через {delay} сек (попытка {self.reconnect_count})")
                     await asyncio.sleep(delay)
                 else:
-                    self.logger.error("❌ Превышен лимит попыток переподключения")
+                    self.logger.error("Превышен лимит попыток переподключения")
                     break
     
     async def _connect_and_subscribe(self):
         """Подключение и подписка на данные"""
         try:
+            self.logger.info("Инициализация WebSocket соединения...")
+            
             # Подключение к WebSocket
             self.websocket = await websockets.connect(
                 self.settings.websocket_url,
-                ping_interval=None,  # Отключаем автоматический ping
+                ping_interval=None,
                 ping_timeout=None,
                 close_timeout=10
             )
             
-            self.logger.info("🔌 WebSocket соединение установлено")
+            self.logger.info("WebSocket соединение установлено")
             
-            # Подписка на данные (расширенная для ИИ-анализа)
+            # Подписка на данные
             subscriptions = [
                 self.settings.get_ticker_subscription(),
                 self.settings.get_kline_subscription(),
@@ -150,13 +166,15 @@ class WebSocketManager:
                 f"publicTrade.{self.symbol}"
             ]
             
+            self.logger.info(f"Подписки для отправки: {subscriptions}")
+            
             subscribe_message = {
                 "op": "subscribe",
                 "args": subscriptions
             }
             
+            self.logger.info(f"Отправляем запрос подписки: {json.dumps(subscribe_message)}")
             await self.websocket.send(json.dumps(subscribe_message))
-            self.logger.info(f"📡 Подписка на данные: {subscriptions}")
             
             # Запуск ping задачи
             if self.ping_task and not self.ping_task.done():
@@ -167,73 +185,121 @@ class WebSocketManager:
             self.is_connected = True
             self.reconnect_count = 0
             
+            self.logger.info("Подписка отправлена, ожидаем данные...")
+            
         except Exception as e:
-            self.logger.error(f"❌ Ошибка подключения: {e}")
+            self.logger.error(f"Ошибка подключения: {e}")
             raise
     
     async def _listen_messages(self):
         """Прослушивание сообщений WebSocket"""
+        self.logger.info("Начинаем прослушивание сообщений...")
+        
         async for message in self.websocket:
             try:
+                self.message_counts["total"] += 1
+                
+                # Логируем каждое полученное сообщение
+                if self.message_counts["total"] <= 10 or self.message_counts["total"] % 100 == 0:
+                    self.logger.info(f"Сообщение #{self.message_counts['total']}: {message[:200]}...")
+                
                 data = json.loads(message)
                 await self._handle_message(data)
                 self.last_data_time = time.time()
                 
+                # Периодически логируем статистику
+                if self.message_counts["total"] % 50 == 0:
+                    self._log_message_statistics()
+                
             except json.JSONDecodeError as e:
-                self.logger.error(f"❌ Ошибка парсинга JSON: {e}")
+                self.logger.error(f"Ошибка парсинга JSON: {e}, сообщение: {message}")
             except Exception as e:
-                self.logger.error(f"❌ Ошибка обработки сообщения: {e}")
+                self.logger.error(f"Ошибка обработки сообщения: {e}")
+    
+    def _log_message_statistics(self):
+        """Логирование статистики сообщений"""
+        self.logger.info("=== СТАТИСТИКА СООБЩЕНИЙ ===")
+        for msg_type, count in self.message_counts.items():
+            self.logger.info(f"  {msg_type}: {count}")
+        self.logger.info(f"=== ДАННЫЕ В ПАМЯТИ ===")
+        self.logger.info(f"  ticker_data: {bool(self.ticker_data)}")
+        self.logger.info(f"  kline_data: {len(self.kline_data)}")
+        self.logger.info(f"  orderbook_data: {bool(self.orderbook_data)}")
+        self.logger.info(f"  trade_data: {len(self.trade_data)}")
     
     async def _handle_message(self, data: dict):
         """Обработка входящих сообщений"""
         try:
+            # Детальное логирование каждого сообщения
+            op = data.get("op", "")
+            topic = data.get("topic", "")
+            success = data.get("success", None)
+            
+            self.logger.debug(f"Обработка сообщения: op='{op}', topic='{topic}', success={success}")
+            
             # Обработка подтверждения подписки
-            if data.get("success") and data.get("op") == "subscribe":
-                self.logger.info(f"✅ Подписка подтверждена: {data.get('ret_msg', 'OK')}")
+            if success is not None and op == "subscribe":
+                self.message_counts["subscribe"] += 1
+                self.logger.info(f"Подтверждение подписки: success={success}, ret_msg='{data.get('ret_msg', 'N/A')}'")
+                if success:
+                    self.logger.info(f"Подписка успешна для: {data.get('ret_msg', 'неизвестно')}")
+                else:
+                    self.logger.error(f"Ошибка подписки: {data}")
                 return
             
-            # Обработка pong ответов
-            if data.get("op") == "ping":
+            # Обработка ping от сервера
+            if op == "ping":
+                self.message_counts["ping"] += 1
                 pong_message = {"op": "pong", "args": data.get("args", [])}
                 await self.websocket.send(json.dumps(pong_message))
+                self.logger.debug(f"Отправлен pong ответ на ping: {data.get('args', [])}")
                 return
             
-            # Получение топика из данных
-            topic = data.get("topic", "")
-            
-            if not topic:
-                return
-            
-            # Обработка ticker данных
-            if topic.startswith("tickers."):
-                await self._handle_ticker_data(data)
-            
-            # Обработка kline данных
-            elif topic.startswith("kline."):
-                await self._handle_kline_data(data)
-            
-            # Обработка orderbook данных
-            elif topic.startswith("orderbook."):
-                await self._handle_orderbook_data(data)
-            
-            # Обработка trade данных
-            elif topic.startswith("publicTrade."):
-                await self._handle_trade_data(data)
+            # Обработка данных по топикам
+            if topic:
+                self.logger.debug(f"Сообщение с топиком '{topic}', размер данных: {len(data.get('data', []))}")
+                
+                if topic.startswith("tickers."):
+                    self.message_counts["ticker"] += 1
+                    await self._handle_ticker_data(data)
+                elif topic.startswith("kline."):
+                    self.message_counts["kline"] += 1
+                    await self._handle_kline_data(data)
+                elif topic.startswith("orderbook."):
+                    self.message_counts["orderbook"] += 1
+                    await self._handle_orderbook_data(data)
+                elif topic.startswith("publicTrade."):
+                    self.message_counts["trade"] += 1
+                    await self._handle_trade_data(data)
+                else:
+                    self.message_counts["unknown"] += 1
+                    self.logger.warning(f"Неизвестный топик: {topic}")
+            else:
+                self.message_counts["unknown"] += 1
+                self.logger.warning(f"Сообщение без топика: {json.dumps(data)[:200]}...")
             
         except Exception as e:
-            self.logger.error(f"❌ Ошибка обработки сообщения: {e}")
+            self.logger.error(f"Ошибка обработки сообщения: {e}")
+            self.logger.error(f"Проблемное сообщение: {json.dumps(data, indent=2)[:500]}...")
     
     async def _handle_ticker_data(self, data: dict):
         """Обработка ticker данных"""
         try:
+            self.logger.debug("Обработка ticker данных...")
             ticker_info = data.get("data", {})
             
             if not ticker_info:
+                self.logger.warning("Пустые ticker данные")
                 return
             
+            symbol = ticker_info.get("symbol")
+            last_price = ticker_info.get("lastPrice")
+            
+            self.logger.info(f"Ticker получен: {symbol} = ${last_price}")
+            
             self.ticker_data = {
-                "symbol": ticker_info.get("symbol"),
-                "price": float(ticker_info.get("lastPrice", 0)),
+                "symbol": symbol,
+                "price": float(last_price) if last_price else 0,
                 "change_24h": float(ticker_info.get("price24hPcnt", 0)) * 100,
                 "volume_24h": float(ticker_info.get("volume24h", 0)),
                 "high_24h": float(ticker_info.get("highPrice24h", 0)),
@@ -243,17 +309,27 @@ class WebSocketManager:
                 "timestamp": datetime.now().isoformat()
             }
             
+            self.logger.info(f"Ticker данные сохранены: цена ${self.ticker_data['price']}")
+            
             # Обновляем стратегию
             if self.strategy:
                 self.strategy.update_ticker(self.ticker_data)
             
         except Exception as e:
-            self.logger.error(f"❌ Ошибка обработки ticker: {e}")
+            self.logger.error(f"Ошибка обработки ticker: {e}")
+            self.logger.error(f"Ticker данные: {data}")
     
     async def _handle_kline_data(self, data: dict):
-        """Обработка kline (свечи) данных с расширенным сбором"""
+        """Обработка kline (свечи) данных"""
         try:
+            self.logger.debug("Обработка kline данных...")
             klines = data.get("data", [])
+            
+            if not klines:
+                self.logger.warning("Пустые kline данные")
+                return
+            
+            self.logger.info(f"Получено {len(klines)} свечей")
             
             for kline_info in klines:
                 kline = {
@@ -267,8 +343,12 @@ class WebSocketManager:
                     "confirm": kline_info.get("confirm", False)
                 }
                 
+                self.logger.debug(f"Kline: {kline['datetime']}, OHLC: {kline['open']}/{kline['high']}/{kline['low']}/{kline['close']}, confirm: {kline['confirm']}")
+                
                 # Добавляем только подтвержденные свечи
                 if kline["confirm"]:
+                    self.logger.info(f"Добавляем подтвержденную свечу: close=${kline['close']}")
+                    
                     # Обычное хранение
                     self.kline_data.append(kline)
                     if len(self.kline_data) > self.max_klines:
@@ -282,6 +362,8 @@ class WebSocketManager:
                     
                     # Обновляем уровни поддержки/сопротивления
                     self._update_price_levels(kline)
+                    
+                    self.logger.info(f"Всего свечей в памяти: обычных={len(self.kline_data)}, расширенных={len(self.extended_kline_data)}")
                 
                 # Обновляем стратегию
                 if self.strategy:
@@ -290,7 +372,8 @@ class WebSocketManager:
                         await self.on_signal_callback(signal)
                 
         except Exception as e:
-            self.logger.error(f"❌ Ошибка обработки kline: {e}")
+            self.logger.error(f"Ошибка обработки kline: {e}")
+            self.logger.error(f"Kline данные: {data}")
     
     def _enhance_kline_data(self, kline: dict) -> dict:
         """Расширение данных свечи для ИИ-анализа"""
@@ -331,7 +414,7 @@ class WebSocketManager:
             return enhanced
             
         except Exception as e:
-            self.logger.error(f"❌ Ошибка улучшения данных свечи: {e}")
+            self.logger.error(f"Ошибка улучшения данных свечи: {e}")
             return kline
     
     def _update_price_levels(self, kline: dict):
@@ -340,8 +423,7 @@ class WebSocketManager:
             high_price = kline["high"]
             low_price = kline["low"]
             
-            # Простое определение уровней (можно улучшить)
-            # Сопротивление - локальные максимумы
+            # Простое определение уровней
             if len(self.extended_kline_data) >= 3:
                 recent_highs = [k["high"] for k in self.extended_kline_data[-3:]]
                 if high_price == max(recent_highs):
@@ -351,7 +433,6 @@ class WebSocketManager:
                         "strength": 1
                     })
             
-            # Поддержка - локальные минимумы
             if len(self.extended_kline_data) >= 3:
                 recent_lows = [k["low"] for k in self.extended_kline_data[-3:]]
                 if low_price == min(recent_lows):
@@ -368,17 +449,27 @@ class WebSocketManager:
                 self.price_levels["support"] = self.price_levels["support"][-20:]
                 
         except Exception as e:
-            self.logger.error(f"❌ Ошибка обновления уровней цен: {e}")
+            self.logger.error(f"Ошибка обновления уровней цен: {e}")
     
     async def _handle_orderbook_data(self, data: dict):
-        """Обработка orderbook данных с расширенным анализом"""
+        """Обработка orderbook данных"""
         try:
+            self.logger.debug("Обработка orderbook данных...")
             orderbook_info = data.get("data", {})
+            
+            if not orderbook_info:
+                self.logger.warning("Пустые orderbook данные")
+                return
+            
+            bids = orderbook_info.get("b", [])
+            asks = orderbook_info.get("a", [])
+            
+            self.logger.debug(f"Orderbook: {len(bids)} bids, {len(asks)} asks")
             
             enhanced_orderbook = {
                 "symbol": self.symbol,
-                "bids": [[float(bid[0]), float(bid[1])] for bid in orderbook_info.get("b", [])],
-                "asks": [[float(ask[0]), float(ask[1])] for ask in orderbook_info.get("a", [])],
+                "bids": [[float(bid[0]), float(bid[1])] for bid in bids],
+                "asks": [[float(ask[0]), float(ask[1])] for ask in asks],
                 "timestamp": datetime.now().isoformat()
             }
             
@@ -387,7 +478,10 @@ class WebSocketManager:
             
             self.orderbook_data = enhanced_orderbook
             
-            # Сохраняем историю ордербука для анализа
+            if enhanced_orderbook.get("best_bid") and enhanced_orderbook.get("best_ask"):
+                self.logger.info(f"Orderbook обновлен: bid=${enhanced_orderbook['best_bid']:.4f}, ask=${enhanced_orderbook['best_ask']:.4f}")
+            
+            # Сохраняем историю ордербука
             self.extended_orderbook_history.append({
                 "timestamp": enhanced_orderbook["timestamp"],
                 "spread": enhanced_orderbook.get("spread", 0),
@@ -407,7 +501,8 @@ class WebSocketManager:
                 self.strategy.update_orderbook(self.orderbook_data)
                 
         except Exception as e:
-            self.logger.error(f"❌ Ошибка обработки orderbook: {e}")
+            self.logger.error(f"Ошибка обработки orderbook: {e}")
+            self.logger.error(f"Orderbook данные: {data}")
     
     def _analyze_orderbook_depth(self, orderbook: dict) -> dict:
         """Расширенный анализ глубины ордербука"""
@@ -448,7 +543,7 @@ class WebSocketManager:
             avg_bid_size = total_bid_volume / len(bids) if bids else 0
             avg_ask_size = total_ask_volume / len(asks) if asks else 0
             
-            # Концентрация ликвидности (топ 10% ордеров)
+            # Концентрация ликвидности
             top_bid_count = max(1, len(bids) // 10)
             top_ask_count = max(1, len(asks) // 10)
             
@@ -480,7 +575,7 @@ class WebSocketManager:
             return analysis
             
         except Exception as e:
-            self.logger.error(f"❌ Ошибка анализа ордербука: {e}")
+            self.logger.error(f"Ошибка анализа ордербука: {e}")
             return {}
     
     def _update_volume_profile(self, orderbook: dict):
@@ -489,11 +584,10 @@ class WebSocketManager:
             bids = orderbook.get("bids", [])
             asks = orderbook.get("asks", [])
             
-            # Создаем ценовые уровни для профиля объема
-            for bid in bids[:10]:  # Топ 10 bid'ов
+            for bid in bids[:10]:
                 price = float(bid[0])
                 volume = float(bid[1])
-                price_level = round(price, 2)  # Округляем для группировки
+                price_level = round(price, 2)
                 
                 if price_level not in self.volume_profile:
                     self.volume_profile[price_level] = {"bid_volume": 0, "ask_volume": 0, "total_volume": 0}
@@ -501,7 +595,7 @@ class WebSocketManager:
                 self.volume_profile[price_level]["bid_volume"] += volume
                 self.volume_profile[price_level]["total_volume"] += volume
             
-            for ask in asks[:10]:  # Топ 10 ask'ов
+            for ask in asks[:10]:
                 price = float(ask[0])
                 volume = float(ask[1])
                 price_level = round(price, 2)
@@ -514,17 +608,23 @@ class WebSocketManager:
             
             # Ограничиваем размер профиля объема
             if len(self.volume_profile) > 100:
-                # Оставляем только самые активные уровни
                 sorted_levels = sorted(self.volume_profile.items(), key=lambda x: x[1]["total_volume"], reverse=True)
                 self.volume_profile = dict(sorted_levels[:100])
                 
         except Exception as e:
-            self.logger.error(f"❌ Ошибка обновления профиля объема: {e}")
+            self.logger.error(f"Ошибка обновления профиля объема: {e}")
     
     async def _handle_trade_data(self, data: dict):
-        """Обработка данных о сделках с расширенным анализом"""
+        """Обработка данных о сделках"""
         try:
+            self.logger.debug("Обработка trade данных...")
             trades = data.get("data", [])
+            
+            if not trades:
+                self.logger.warning("Пустые trade данные")
+                return
+            
+            self.logger.debug(f"Получено {len(trades)} сделок")
             
             for trade_info in trades:
                 trade = {
@@ -546,19 +646,22 @@ class WebSocketManager:
                 if len(self.trade_data) > self.max_trades:
                     self.trade_data = self.trade_data[-self.max_trades:]
             
+            self.logger.info(f"Добавлено {len(trades)} сделок, всего в памяти: {len(self.trade_data)}")
+            
             # Обновляем стратегию
             if self.strategy:
                 self.strategy.update_trades(trades)
                 
         except Exception as e:
-            self.logger.error(f"❌ Ошибка обработки trades: {e}")
+            self.logger.error(f"Ошибка обработки trades: {e}")
+            self.logger.error(f"Trade данные: {data}")
     
     def _calculate_average_trade_size(self) -> float:
         """Вычисление среднего размера сделки"""
         if not self.trade_data:
             return 0
         
-        recent_trades = self.trade_data[-50:]  # Последние 50 сделок
+        recent_trades = self.trade_data[-50:]
         total_size = sum(trade["size"] for trade in recent_trades)
         return total_size / len(recent_trades)
     
@@ -575,9 +678,10 @@ class WebSocketManager:
                     }
                     await self.websocket.send(json.dumps(ping_message))
                     self.last_ping = time.time()
+                    self.logger.debug(f"Отправлен ping: {ping_message['args'][0]}")
                 
             except Exception as e:
-                self.logger.error(f"❌ Ошибка ping: {e}")
+                self.logger.error(f"Ошибка ping: {e}")
                 break
     
     def get_market_data(self, symbol: str = None) -> dict:
@@ -586,6 +690,7 @@ class WebSocketManager:
             return {}
         
         if not self.ticker_data:
+            self.logger.warning("ticker_data пуст при запросе get_market_data")
             return {}
         
         # Определяем тренд на основе изменения за 24ч
@@ -614,36 +719,38 @@ class WebSocketManager:
         }
     
     def get_comprehensive_market_data(self, symbol: str = None) -> dict:
-        """
-        НОВЫЙ МЕТОД: Получить ВСЕ рыночные данные для ИИ-анализа
-        """
+        """Получить ВСЕ рыночные данные для ИИ-анализа"""
         if symbol and symbol != self.symbol:
+            self.logger.warning(f"Запрошен символ {symbol}, но WebSocket подключен к {self.symbol}")
             return {}
         
         try:
+            self.logger.info("Начинаем сбор comprehensive market data...")
+            
+            # Проверяем доступность данных
+            if not self.ticker_data:
+                self.logger.warning("ticker_data пуст")
+            else:
+                self.logger.info(f"ticker_data доступен: {self.ticker_data.get('symbol')} @ ${self.ticker_data.get('price')}")
+            
+            if not self.kline_data:
+                self.logger.warning("kline_data пуст")
+            else:
+                self.logger.info(f"kline_data: {len(self.kline_data)} обычных свечей")
+            
+            if not self.extended_kline_data:
+                self.logger.warning("extended_kline_data пуст")
+            else:
+                self.logger.info(f"extended_kline_data: {len(self.extended_kline_data)} расширенных свечей")
+            
             comprehensive_data = {
-                # Основные рыночные данные
                 "basic_market": self._get_basic_market_summary(),
-                
-                # Расширенные данные свечей
                 "extended_klines": self._get_extended_klines_summary(),
-                
-                # Детальный анализ ордербука
                 "orderbook_analysis": self._get_orderbook_analysis(),
-                
-                # Анализ сделок и активности
                 "trading_activity": self._get_trading_activity_analysis(),
-                
-                # Технический анализ уровней
                 "price_levels": self._get_price_levels_analysis(),
-                
-                # Профиль объема
                 "volume_profile": self._get_volume_profile_analysis(),
-                
-                # Рыночная микроструктура
                 "market_microstructure": self._get_microstructure_analysis(),
-                
-                # Временные метки и качество данных
                 "metadata": {
                     "timestamp": datetime.now().isoformat(),
                     "symbol": symbol or self.symbol,
@@ -652,18 +759,28 @@ class WebSocketManager:
                 }
             }
             
+            self.logger.info(f"Comprehensive data собраны: {len(comprehensive_data)} секций")
+            
+            # Логируем что в каждой секции
+            for section, data in comprehensive_data.items():
+                if isinstance(data, dict):
+                    self.logger.debug(f"  {section}: {len(data)} полей")
+                else:
+                    self.logger.debug(f"  {section}: {type(data)}")
+            
             return comprehensive_data
             
         except Exception as e:
-            self.logger.error(f"❌ Ошибка сбора полных рыночных данных: {e}")
+            self.logger.error(f"Ошибка сбора полных рыночных данных: {e}")
             return {}
     
     def _get_basic_market_summary(self) -> dict:
         """Основные рыночные данные"""
         if not self.ticker_data:
+            self.logger.warning("ticker_data пуст в _get_basic_market_summary")
             return {}
         
-        return {
+        summary = {
             "symbol": self.ticker_data.get("symbol", self.symbol),
             "current_price": self.ticker_data.get("price", 0),
             "change_24h_percent": self.ticker_data.get("change_24h", 0),
@@ -675,16 +792,19 @@ class WebSocketManager:
             "spread": abs(self.ticker_data.get("ask", 0) - self.ticker_data.get("bid", 0)),
             "spread_percent": (abs(self.ticker_data.get("ask", 0) - self.ticker_data.get("bid", 0)) / self.ticker_data.get("bid", 1)) * 100
         }
+        
+        self.logger.debug(f"Basic market summary: price={summary['current_price']}")
+        return summary
     
     def _get_extended_klines_summary(self) -> dict:
         """Расширенная сводка по свечам"""
         if not self.extended_kline_data:
+            self.logger.warning("extended_kline_data пуст в _get_extended_klines_summary")
             return {}
         
         try:
-            recent_klines = self.extended_kline_data[-50:]  # Последние 50 свечей
+            recent_klines = self.extended_kline_data[-50:]
             
-            # Ценовые данные
             closes = [k["close"] for k in recent_klines]
             highs = [k["high"] for k in recent_klines]
             lows = [k["low"] for k in recent_klines]
@@ -726,16 +846,17 @@ class WebSocketManager:
                 "price_statistics": price_stats,
                 "volume_statistics": volume_stats,
                 "candle_analysis": candle_analysis,
-                "raw_klines": recent_klines[-20:]  # Последние 20 свечей с полными данными
+                "raw_klines": recent_klines[-20:]
             }
             
         except Exception as e:
-            self.logger.error(f"❌ Ошибка анализа свечей: {e}")
+            self.logger.error(f"Ошибка анализа свечей: {e}")
             return {}
     
     def _get_orderbook_analysis(self) -> dict:
         """Детальный анализ ордербука"""
         if not self.orderbook_data:
+            self.logger.warning("orderbook_data пуст в _get_orderbook_analysis")
             return {}
         
         try:
@@ -775,12 +896,13 @@ class WebSocketManager:
             }
             
         except Exception as e:
-            self.logger.error(f"❌ Ошибка анализа ордербука: {e}")
+            self.logger.error(f"Ошибка анализа ордербука: {e}")
             return {}
     
     def _get_trading_activity_analysis(self) -> dict:
         """Анализ торговой активности"""
         if not self.trade_data:
+            self.logger.warning("trade_data пуст в _get_trading_activity_analysis")
             return {}
         
         try:
@@ -823,21 +945,18 @@ class WebSocketManager:
                     "trend": "up" if trade_prices[-1] > trade_prices[0] else "down" if len(trade_prices) > 1 else "neutral"
                 },
                 "time_patterns": time_analysis,
-                "recent_trades_sample": recent_trades[-10:]  # Последние 10 сделок
+                "recent_trades_sample": recent_trades[-10:]
             }
             
         except Exception as e:
-            self.logger.error(f"❌ Ошибка анализа торговой активности: {e}")
+            self.logger.error(f"Ошибка анализа торговой активности: {e}")
             return {}
     
     def _get_price_levels_analysis(self) -> dict:
         """Анализ уровней поддержки и сопротивления"""
         try:
-            # Кластеризация уровней поддержки
             support_clusters = self._cluster_price_levels(self.price_levels["support"])
             resistance_clusters = self._cluster_price_levels(self.price_levels["resistance"])
-            
-            # Определение ключевых уровней
             key_levels = self._identify_key_levels(support_clusters, resistance_clusters)
             
             return {
@@ -849,7 +968,7 @@ class WebSocketManager:
             }
             
         except Exception as e:
-            self.logger.error(f"❌ Ошибка анализа ценовых уровней: {e}")
+            self.logger.error(f"Ошибка анализа ценовых уровней: {e}")
             return {}
     
     def _get_volume_profile_analysis(self) -> dict:
@@ -858,13 +977,9 @@ class WebSocketManager:
             if not self.volume_profile:
                 return {}
             
-            # Сортируем уровни по объему
             sorted_levels = sorted(self.volume_profile.items(), key=lambda x: x[1]["total_volume"], reverse=True)
-            
-            # VPOC (Volume Point of Control) - уровень с максимальным объемом
             vpoc = sorted_levels[0] if sorted_levels else None
             
-            # Высокообъемные узлы (HVN) и низкообъемные узлы (LVN)
             avg_volume = sum(data["total_volume"] for data in self.volume_profile.values()) / len(self.volume_profile)
             hvn_levels = [(price, data) for price, data in sorted_levels if data["total_volume"] > avg_volume * 1.5]
             lvn_levels = [(price, data) for price, data in sorted_levels if data["total_volume"] < avg_volume * 0.5]
@@ -878,13 +993,12 @@ class WebSocketManager:
             }
             
         except Exception as e:
-            self.logger.error(f"❌ Ошибка анализа профиля объема: {e}")
+            self.logger.error(f"Ошибка анализа профиля объема: {e}")
             return {}
     
     def _get_microstructure_analysis(self) -> dict:
         """Анализ микроструктуры рынка"""
         try:
-            # Агрегация различных аспектов микроструктуры
             return {
                 "liquidity_metrics": self._calculate_liquidity_metrics(),
                 "order_flow_metrics": self._calculate_order_flow_metrics(),
@@ -894,7 +1008,7 @@ class WebSocketManager:
             }
             
         except Exception as e:
-            self.logger.error(f"❌ Ошибка анализа микроструктуры: {e}")
+            self.logger.error(f"Ошибка анализа микроструктуры: {e}")
             return {}
     
     # Вспомогательные методы для анализа
@@ -943,7 +1057,6 @@ class WebSocketManager:
         if len(prices) != len(volumes) or len(prices) < 2:
             return 0
         
-        # Простая корреляция
         price_changes = [prices[i] - prices[i-1] for i in range(1, len(prices))]
         volume_changes = [volumes[i] - volumes[i-1] for i in range(1, len(volumes))]
         
@@ -971,7 +1084,8 @@ class WebSocketManager:
             "orderbook_available": bool(self.orderbook_data),
             "trades_available": len(self.trade_data),
             "price_levels_identified": len(self.price_levels["support"]) + len(self.price_levels["resistance"]),
-            "volume_profile_depth": len(self.volume_profile)
+            "volume_profile_depth": len(self.volume_profile),
+            "message_statistics": self.message_counts.copy()
         }
     
     def _get_collection_period(self) -> dict:
@@ -989,71 +1103,55 @@ class WebSocketManager:
             "timeframe": self.settings.STRATEGY_TIMEFRAME
         }
     
-    # Остальные вспомогательные методы (заглушки для полноты)
+    # Остальные вспомогательные методы (заглушки)
     
     def _calculate_orderbook_stability(self, history: List[dict]) -> float:
-        """Оценка стабильности ордербука"""
-        return 0.5  # Заглушка
+        return 0.5
     
     def _calculate_liquidity_score(self, orderbook: dict) -> float:
-        """Оценка ликвидности"""
-        return 0.5  # Заглушка
+        return 0.5
     
     def _calculate_order_flow_pressure(self, orderbook: dict) -> float:
-        """Давление ордер-флоу"""
-        return 0.0  # Заглушка
+        return 0.0
     
     def _calculate_price_impact(self, trades: List[dict]) -> float:
-        """Ценовое воздействие сделок"""
-        return 0.0  # Заглушка
+        return 0.0
     
     def _analyze_trading_time_patterns(self, trades: List[dict]) -> dict:
-        """Анализ временных паттернов торговли"""
-        return {}  # Заглушка
+        return {}
     
     def _cluster_price_levels(self, levels: List[dict]) -> List[dict]:
-        """Кластеризация ценовых уровней"""
-        return levels[:10]  # Заглушка
+        return levels[:10]
     
     def _identify_key_levels(self, support: List[dict], resistance: List[dict]) -> dict:
-        """Определение ключевых уровней"""
-        return {}  # Заглушка
+        return {}
     
     def _analyze_current_price_context(self, key_levels: dict) -> dict:
-        """Анализ текущего ценового контекста"""
-        return {}  # Заглушка
+        return {}
     
     def _calculate_level_strength(self, support: List[dict], resistance: List[dict]) -> dict:
-        """Расчет силы уровней"""
-        return {}  # Заглушка
+        return {}
     
     def _analyze_volume_distribution(self) -> dict:
-        """Анализ распределения объема"""
-        return {}  # Заглушка
+        return {}
     
     def _analyze_price_acceptance(self) -> dict:
-        """Анализ принятия цены"""
-        return {}  # Заглушка
+        return {}
     
     def _calculate_liquidity_metrics(self) -> dict:
-        """Метрики ликвидности"""
-        return {}  # Заглушка
+        return {}
     
     def _calculate_order_flow_metrics(self) -> dict:
-        """Метрики ордер-флоу"""
-        return {}  # Заглушка
+        return {}
     
     def _analyze_price_discovery(self) -> dict:
-        """Анализ ценообразования"""
-        return {}  # Заглушка
+        return {}
     
     def _assess_market_efficiency(self) -> dict:
-        """Оценка эффективности рынка"""
-        return {}  # Заглушка
+        return {}
     
     def _detect_volatility_clustering(self) -> dict:
-        """Обнаружение кластеров волатильности"""
-        return {}  # Заглушка
+        return {}
     
     def get_connection_status(self) -> dict:
         """Получить статус соединения"""
@@ -1065,6 +1163,7 @@ class WebSocketManager:
             "data_delay": time.time() - self.last_data_time if self.last_data_time else 0,
             "websocket_url": self.settings.websocket_url,
             "subscribed_symbol": self.symbol,
+            "message_counts": self.message_counts.copy(),
             "extended_data_available": {
                 "klines": len(self.extended_kline_data),
                 "orderbook_history": len(self.extended_orderbook_history),
