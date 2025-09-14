@@ -1,0 +1,45 @@
+# Основные зависимости
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# WebSocket клиент
+websockets==12.0
+
+# Telegram бот
+python-telegram-bot==20.7
+
+# Математика и анализ данных
+numpy==1.25.2
+
+# Асинхронные задачи
+asyncio-mqtt==0.13.0
+
+# HTTP клиент для API запросов
+httpx==0.25.2
+aiohttp==3.9.1
+
+# Работа с датами
+python-dateutil==2.8.2
+
+# Логирование
+loguru==0.7.2
+
+# Переменные окружения
+python-dotenv==1.0.0
+
+# JSON работа
+orjson==3.9.10
+
+# Криптография (для безопасности)
+cryptography==41.0.7
+
+# Мониторинг и метрики
+psutil==5.9.6
+
+# Timezone support
+pytz==2023.3
+
+# Утилиты
+typing-extensions==4.8.0
