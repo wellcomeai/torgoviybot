@@ -1,6 +1,6 @@
 """
 ИИ анализатор рынка через OpenAI GPT-4
-Подробный технический анализ фьючерсов с прогнозами и уровнями TP/SL
+Исправлено: правильный сбор данных через get_comprehensive_market_data
 """
 
 import asyncio
@@ -20,7 +20,7 @@ from config.settings import get_settings
 
 
 class MarketAnalyzer:
-    """ИИ анализатор рынка через OpenAI GPT-4"""
+    """ИИ анализатор рынка через OpenAI GPT-4 (исправленная версия)"""
     
     def __init__(self, websocket_manager=None):
         self.settings = get_settings()
@@ -31,24 +31,24 @@ class MarketAnalyzer:
         self.api_key = os.getenv("OPENAI_API_KEY", "")
         self.model = "gpt-4"
         self.max_tokens = 2000
-        self.temperature = 0.3  # Более консервативная температура для финансового анализа
+        self.temperature = 0.3
         
         # Проверка доступности OpenAI
         if not OPENAI_AVAILABLE:
-            self.logger.error("❌ OpenAI библиотека не установлена")
+            self.logger.error("OpenAI библиотека не установлена")
             return
         
         if not self.api_key:
-            self.logger.warning("⚠️ OPENAI_API_KEY не установлен")
+            self.logger.warning("OPENAI_API_KEY не установлен")
             return
         
         # Инициализация OpenAI клиента
         try:
             openai.api_key = self.api_key
             self.client = openai.OpenAI(api_key=self.api_key)
-            self.logger.info("✅ OpenAI клиент инициализирован")
+            self.logger.info("OpenAI клиент инициализирован")
         except Exception as e:
-            self.logger.error(f"❌ Ошибка инициализации OpenAI: {e}")
+            self.logger.error(f"Ошибка инициализации OpenAI: {e}")
             self.client = None
     
     async def analyze_market(self, symbol: str = None) -> Tuple[Dict[str, Any], str]:
@@ -58,264 +58,302 @@ class MarketAnalyzer:
         """
         try:
             if not OPENAI_AVAILABLE:
-                error_msg = "❌ OpenAI библиотека недоступна. Установите: pip install openai"
+                error_msg = "OpenAI библиотека недоступна. Установите: pip install openai"
                 self.logger.error(error_msg)
                 return {}, error_msg
             
             if not self.client:
-                error_msg = "❌ OpenAI клиент не инициализирован. Проверьте OPENAI_API_KEY"
+                error_msg = "OpenAI клиент не инициализирован. Проверьте OPENAI_API_KEY"
                 return {}, error_msg
             
             # Шаг 1: Сбор всех рыночных данных
-            self.logger.info(f"🔍 Начинаем сбор данных для анализа {symbol or 'текущего символа'}...")
+            self.logger.info(f"Начинаем сбор данных для анализа {symbol or 'текущего символа'}...")
             market_data = await self._collect_comprehensive_market_data(symbol)
             
             if not market_data:
-                error_msg = "❌ Не удалось собрать рыночные данные"
+                error_msg = "Не удалось собрать рыночные данные"
+                self.logger.error(error_msg)
                 return {}, error_msg
+            
+            # Проверяем качество собранных данных
+            data_quality = self._assess_collected_data_quality(market_data)
+            self.logger.info(f"Качество данных: {data_quality}")
             
             # Шаг 2: Формирование промпта для GPT-4
             prompt = self._create_analysis_prompt(market_data)
+            self.logger.info(f"Промпт создан, длина: {len(prompt)} символов")
             
             # Шаг 3: Отправка запроса в OpenAI
-            self.logger.info("🤖 Отправляем данные в GPT-4 для анализа...")
+            self.logger.info("Отправляем данные в GPT-4 для анализа...")
             ai_analysis = await self._get_ai_analysis(prompt)
             
             if not ai_analysis:
-                error_msg = "❌ Не удалось получить анализ от OpenAI"
+                error_msg = "Не удалось получить анализ от OpenAI"
                 return market_data, error_msg
             
-            self.logger.info("✅ ИИ анализ успешно получен")
+            self.logger.info("ИИ анализ успешно получен")
             return market_data, ai_analysis
             
         except Exception as e:
-            error_msg = f"❌ Ошибка анализа рынка: {str(e)}"
+            error_msg = f"Ошибка анализа рынка: {str(e)}"
             self.logger.error(error_msg)
             return {}, error_msg
     
     async def _collect_comprehensive_market_data(self, symbol: str = None) -> Dict[str, Any]:
-        """Сбор всех доступных рыночных данных"""
+        """Сбор всех доступных рыночных данных - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
         try:
             if not self.websocket_manager:
+                self.logger.error("WebSocket manager не инициализирован")
                 return {}
             
-            # Базовые рыночные данные
-            market_data = self.websocket_manager.get_market_data(symbol)
+            # Проверяем подключение WebSocket
+            connection_status = self.websocket_manager.get_connection_status()
+            if not connection_status.get("is_connected", False):
+                self.logger.error("WebSocket не подключен")
+                return {}
             
-            # Расширенные данные из WebSocket менеджера
-            ws_status = self.websocket_manager.get_connection_status()
+            self.logger.info("WebSocket подключен, собираем comprehensive данные...")
             
-            # Собираем данные стратегии
-            strategy_data = {}
-            if hasattr(self.websocket_manager, 'strategy') and self.websocket_manager.strategy:
-                strategy_data = self.websocket_manager.strategy.get_current_data()
+            # ИСПОЛЬЗУЕМ НОВЫЙ МЕТОД для полного сбора данных
+            comprehensive_data = self.websocket_manager.get_comprehensive_market_data(symbol)
             
-            # Формируем полный набор данных
-            comprehensive_data = {
-                # Основные рыночные данные
-                "basic_market": market_data,
+            if not comprehensive_data:
+                self.logger.warning("get_comprehensive_market_data вернул пустые данные, пробуем fallback...")
                 
-                # Технические индикаторы
-                "technical_indicators": strategy_data.get('current_indicators', {}),
-                
-                # Данные свечей (последние 50)
-                "recent_klines": self._get_recent_klines_data(),
-                
-                # Ордербук данные
-                "orderbook": self._get_orderbook_summary(),
-                
-                # Данные о сделках
-                "recent_trades": self._get_recent_trades_summary(),
-                
-                # Волатильность и статистика
-                "market_stats": self._calculate_market_statistics(),
-                
-                # Временные метки
-                "timestamp": datetime.now().isoformat(),
-                "symbol": symbol or self.websocket_manager.symbol,
-                "timeframe": self.settings.STRATEGY_TIMEFRAME,
-                
-                # Статус подключения
-                "data_quality": {
-                    "websocket_connected": ws_status.get("is_connected", False),
-                    "data_delay": ws_status.get("data_delay", 0),
-                    "klines_available": strategy_data.get('klines_count', 0),
-                    "indicators_calculated": len(strategy_data.get('current_indicators', {}))
-                }
-            }
+                # Fallback - собираем базовые данные вручную
+                comprehensive_data = await self._collect_fallback_data(symbol)
+            
+            # Логируем что получили
+            self._log_collected_data(comprehensive_data)
             
             return comprehensive_data
             
         except Exception as e:
-            self.logger.error(f"❌ Ошибка сбора рыночных данных: {e}")
+            self.logger.error(f"Ошибка сбора рыночных данных: {e}")
             return {}
     
-    def _get_recent_klines_data(self) -> List[Dict]:
-        """Получить данные последних свечей"""
+    async def _collect_fallback_data(self, symbol: str = None) -> Dict[str, Any]:
+        """Fallback сбор данных если comprehensive метод не работает"""
+        try:
+            self.logger.info("Используем fallback метод сбора данных...")
+            
+            # Базовые рыночные данные
+            basic_market = self.websocket_manager.get_market_data(symbol)
+            self.logger.info(f"Базовые данные: {bool(basic_market)}")
+            
+            # Данные стратегии
+            strategy_data = {}
+            if hasattr(self.websocket_manager, 'strategy') and self.websocket_manager.strategy:
+                strategy_data = self.websocket_manager.strategy.get_current_data()
+                self.logger.info(f"Данные стратегии: {len(strategy_data.get('current_indicators', {}))}")
+            
+            # Формируем структуру данных
+            fallback_data = {
+                "basic_market": basic_market or {},
+                "technical_indicators": strategy_data.get('current_indicators', {}),
+                "recent_klines": self._get_basic_klines_data(),
+                "orderbook": self._get_basic_orderbook_data(),
+                "recent_trades": self._get_basic_trades_data(),
+                "market_stats": self._calculate_basic_stats(),
+                "timestamp": datetime.now().isoformat(),
+                "symbol": symbol or self.websocket_manager.symbol,
+                "timeframe": self.settings.STRATEGY_TIMEFRAME,
+                "data_quality": {
+                    "websocket_connected": True,
+                    "data_delay": 0,
+                    "klines_available": len(getattr(self.websocket_manager, 'kline_data', [])),
+                    "indicators_calculated": len(strategy_data.get('current_indicators', {}))
+                }
+            }
+            
+            return fallback_data
+            
+        except Exception as e:
+            self.logger.error(f"Ошибка fallback сбора данных: {e}")
+            return {}
+    
+    def _get_basic_klines_data(self) -> List[Dict]:
+        """Получить базовые данные свечей"""
         try:
             if not hasattr(self.websocket_manager, 'kline_data'):
                 return []
             
-            klines = self.websocket_manager.kline_data[-50:]  # Последние 50 свечей
-            
-            formatted_klines = []
-            for kline in klines:
-                formatted_klines.append({
+            klines = self.websocket_manager.kline_data[-20:]  # Последние 20 свечей
+            return [
+                {
                     "timestamp": kline.get("timestamp", 0),
                     "open": kline.get("open", 0),
                     "high": kline.get("high", 0),
                     "low": kline.get("low", 0),
                     "close": kline.get("close", 0),
                     "volume": kline.get("volume", 0)
-                })
-            
-            return formatted_klines
-            
+                }
+                for kline in klines
+            ]
         except Exception as e:
-            self.logger.error(f"❌ Ошибка получения данных свечей: {e}")
+            self.logger.error(f"Ошибка получения klines: {e}")
             return []
     
-    def _get_orderbook_summary(self) -> Dict:
-        """Получить сводку ордербука"""
+    def _get_basic_orderbook_data(self) -> Dict:
+        """Получить базовые данные ордербука"""
         try:
             if not hasattr(self.websocket_manager, 'orderbook_data'):
                 return {}
             
             orderbook = self.websocket_manager.orderbook_data
-            
             if not orderbook:
                 return {}
             
-            bids = orderbook.get("bids", [])[:10]  # Топ 10 bid'ов
-            asks = orderbook.get("asks", [])[:10]  # Топ 10 ask'ов
-            
-            # Вычисляем спред и глубину рынка
-            spread = 0
-            if bids and asks:
-                best_bid = float(bids[0][0]) if bids[0] else 0
-                best_ask = float(asks[0][0]) if asks[0] else 0
-                spread = best_ask - best_bid
-            
-            # Общий объем в ордербуке
-            total_bid_volume = sum(float(bid[1]) for bid in bids if len(bid) > 1)
-            total_ask_volume = sum(float(ask[1]) for ask in asks if len(ask) > 1)
-            
             return {
-                "spread": spread,
-                "best_bid": float(bids[0][0]) if bids and bids[0] else 0,
-                "best_ask": float(asks[0][0]) if asks and asks[0] else 0,
-                "total_bid_volume": total_bid_volume,
-                "total_ask_volume": total_ask_volume,
-                "bid_ask_ratio": total_bid_volume / total_ask_volume if total_ask_volume > 0 else 0,
-                "top_bids": bids[:5],
-                "top_asks": asks[:5]
+                "bids": orderbook.get("bids", [])[:5],
+                "asks": orderbook.get("asks", [])[:5],
+                "spread": orderbook.get("spread", 0),
+                "timestamp": orderbook.get("timestamp")
             }
-            
         except Exception as e:
-            self.logger.error(f"❌ Ошибка анализа ордербука: {e}")
+            self.logger.error(f"Ошибка получения orderbook: {e}")
             return {}
     
-    def _get_recent_trades_summary(self) -> Dict:
-        """Получить сводку последних сделок"""
+    def _get_basic_trades_data(self) -> Dict:
+        """Получить базовые данные сделок"""
         try:
             if not hasattr(self.websocket_manager, 'trade_data'):
                 return {}
             
-            trades = self.websocket_manager.trade_data[-100:]  # Последние 100 сделок
-            
+            trades = self.websocket_manager.trade_data[-50:]  # Последние 50 сделок
             if not trades:
                 return {}
             
-            # Анализ сделок
             buy_trades = [t for t in trades if t.get("side", "").upper() == "BUY"]
             sell_trades = [t for t in trades if t.get("side", "").upper() == "SELL"]
-            
-            total_buy_volume = sum(t.get("size", 0) for t in buy_trades)
-            total_sell_volume = sum(t.get("size", 0) for t in sell_trades)
-            
-            avg_trade_size = sum(t.get("size", 0) for t in trades) / len(trades) if trades else 0
-            
-            # Последние цены
-            recent_prices = [t.get("price", 0) for t in trades[-10:]]
-            price_trend = "up" if recent_prices[-1] > recent_prices[0] else "down" if recent_prices else "neutral"
             
             return {
                 "total_trades": len(trades),
                 "buy_trades": len(buy_trades),
                 "sell_trades": len(sell_trades),
-                "buy_sell_ratio": len(buy_trades) / len(sell_trades) if sell_trades else 0,
-                "total_buy_volume": total_buy_volume,
-                "total_sell_volume": total_sell_volume,
-                "volume_ratio": total_buy_volume / total_sell_volume if total_sell_volume > 0 else 0,
-                "avg_trade_size": avg_trade_size,
-                "price_trend": price_trend,
-                "latest_price": recent_prices[-1] if recent_prices else 0
+                "latest_trades": trades[-10:] if trades else []
             }
-            
         except Exception as e:
-            self.logger.error(f"❌ Ошибка анализа сделок: {e}")
+            self.logger.error(f"Ошибка получения trades: {e}")
             return {}
     
-    def _calculate_market_statistics(self) -> Dict:
-        """Вычислить дополнительную рыночную статистику"""
+    def _calculate_basic_stats(self) -> Dict:
+        """Вычислить базовую статистику"""
         try:
-            stats = {}
+            if not hasattr(self.websocket_manager, 'kline_data'):
+                return {}
             
-            # Анализ свечей для волатильности
-            if hasattr(self.websocket_manager, 'kline_data') and self.websocket_manager.kline_data:
-                klines = self.websocket_manager.kline_data[-20:]  # Последние 20 свечей
-                
-                if klines:
-                    closes = [k.get("close", 0) for k in klines]
-                    highs = [k.get("high", 0) for k in klines]
-                    lows = [k.get("low", 0) for k in klines]
-                    volumes = [k.get("volume", 0) for k in klines]
-                    
-                    # Волатильность (стандартное отклонение цен закрытия)
-                    if len(closes) > 1:
-                        mean_price = sum(closes) / len(closes)
-                        variance = sum((price - mean_price) ** 2 for price in closes) / len(closes)
-                        volatility = (variance ** 0.5) / mean_price * 100  # В процентах
-                        stats["volatility_percent"] = volatility
-                    
-                    # Средний объем
-                    stats["avg_volume"] = sum(volumes) / len(volumes) if volumes else 0
-                    
-                    # Диапазон цен
-                    stats["price_range"] = {
-                        "high": max(highs) if highs else 0,
-                        "low": min(lows) if lows else 0,
-                        "range_percent": ((max(highs) - min(lows)) / min(lows) * 100) if lows and min(lows) > 0 else 0
-                    }
+            klines = self.websocket_manager.kline_data[-20:]
+            if not klines:
+                return {}
             
-            return stats
+            closes = [k.get("close", 0) for k in klines]
+            volumes = [k.get("volume", 0) for k in klines]
+            
+            return {
+                "avg_price": sum(closes) / len(closes) if closes else 0,
+                "avg_volume": sum(volumes) / len(volumes) if volumes else 0,
+                "price_range": max(closes) - min(closes) if closes else 0,
+                "klines_analyzed": len(klines)
+            }
+        except Exception as e:
+            self.logger.error(f"Ошибка вычисления статистики: {e}")
+            return {}
+    
+    def _log_collected_data(self, data: Dict[str, Any]):
+        """Логирование собранных данных"""
+        try:
+            self.logger.info("=== СОБРАННЫЕ ДАННЫЕ ===")
+            self.logger.info(f"Basic market: {bool(data.get('basic_market'))}")
+            
+            basic_market = data.get('basic_market', {})
+            if basic_market:
+                self.logger.info(f"  Цена: {basic_market.get('price', 'N/A')}")
+                self.logger.info(f"  Символ: {basic_market.get('symbol', 'N/A')}")
+            
+            indicators = data.get('technical_indicators', {})
+            self.logger.info(f"Индикаторы: {len(indicators)}")
+            if indicators:
+                self.logger.info(f"  RSI: {indicators.get('rsi', 'N/A')}")
+                self.logger.info(f"  SMA short: {indicators.get('sma_short', 'N/A')}")
+            
+            klines = data.get('recent_klines', [])
+            self.logger.info(f"Свечи: {len(klines)}")
+            
+            orderbook = data.get('orderbook', {})
+            self.logger.info(f"Ордербук: {bool(orderbook)}")
+            
+            trades = data.get('recent_trades', {})
+            self.logger.info(f"Сделки: {trades.get('total_trades', 0) if isinstance(trades, dict) else len(trades)}")
             
         except Exception as e:
-            self.logger.error(f"❌ Ошибка вычисления статистики: {e}")
-            return {}
+            self.logger.error(f"Ошибка логирования данных: {e}")
+    
+    def _assess_collected_data_quality(self, data: Dict[str, Any]) -> str:
+        """Оценка качества собранных данных"""
+        try:
+            issues = []
+            
+            if not data:
+                return "КРИТИЧНО: Нет данных"
+            
+            if not data.get('basic_market'):
+                issues.append("Нет базовых рыночных данных")
+            
+            indicators = data.get('technical_indicators', {})
+            if not indicators:
+                issues.append("Нет технических индикаторов")
+            
+            klines = data.get('recent_klines', [])
+            if not klines:
+                issues.append("Нет данных свечей")
+            elif len(klines) < 10:
+                issues.append(f"Мало свечей: {len(klines)}")
+            
+            if issues:
+                return f"ПРОБЛЕМЫ: {', '.join(issues)}"
+            
+            return "ХОРОШО: Все данные доступны"
+            
+        except Exception as e:
+            return f"ОШИБКА: {e}"
     
     def _create_analysis_prompt(self, market_data: Dict) -> str:
-        """Создание промпта для GPT-4 анализа"""
+        """Создание промпта для GPT-4 анализа - УЛУЧШЕННАЯ ВЕРСИЯ"""
         
         symbol = market_data.get("symbol", "UNKNOWN")
         timeframe = market_data.get("timeframe", "5m")
         
-        # Извлекаем ключевые данные
+        # Извлекаем данные с проверками
         basic_market = market_data.get("basic_market", {})
         indicators = market_data.get("technical_indicators", {})
+        klines = market_data.get("recent_klines", [])
         orderbook = market_data.get("orderbook", {})
         trades = market_data.get("recent_trades", {})
         stats = market_data.get("market_stats", {})
         
+        # Проверяем наличие критически важных данных
+        if not basic_market:
+            return "ОШИБКА: Нет базовых рыночных данных для анализа"
+        
+        # Текущая цена
+        current_price = basic_market.get('price', 'N/A')
+        if current_price == 'N/A':
+            return "ОШИБКА: Нет данных о текущей цене"
+        
         prompt = f"""Ты профессиональный трейдер-аналитик фьючерсов с 15-летним опытом. Проведи ПОДРОБНЫЙ технический анализ для {symbol} на таймфрейме {timeframe}.
 
 📊 РЫНОЧНЫЕ ДАННЫЕ:
-Текущая цена: ${basic_market.get('price', 'N/A')}
+Текущая цена: ${current_price}
 Изменение 24ч: {basic_market.get('change_24h', 'N/A')}
 Объем 24ч: {basic_market.get('volume_24h', 'N/A')}
 Максимум 24ч: ${basic_market.get('high_24h', 'N/A')}
 Минимум 24ч: ${basic_market.get('low_24h', 'N/A')}
-Спред: ${orderbook.get('spread', 'N/A')}
+Тренд: {basic_market.get('trend', 'N/A')}"""
+
+        # Добавляем технические индикаторы если есть
+        if indicators:
+            prompt += f"""
 
 📈 ТЕХНИЧЕСКИЕ ИНДИКАТОРЫ:
 RSI: {indicators.get('rsi', 'N/A')}
@@ -327,28 +365,50 @@ MACD: {indicators.get('macd', 'N/A')}
 MACD Signal: {indicators.get('signal', 'N/A')}
 Bollinger Upper: {indicators.get('bb_upper', 'N/A')}
 Bollinger Middle: {indicators.get('bb_middle', 'N/A')}
-Bollinger Lower: {indicators.get('bb_lower', 'N/A')}
-Волатильность: {stats.get('volatility_percent', 'N/A')}%
+Bollinger Lower: {indicators.get('bb_lower', 'N/A')}"""
+
+        # Добавляем данные ордербука если есть
+        if orderbook and orderbook.get('bids'):
+            prompt += f"""
 
 📚 ОРДЕРБУК:
-Лучший BID: ${orderbook.get('best_bid', 'N/A')}
-Лучший ASK: ${orderbook.get('best_ask', 'N/A')}
-Соотношение BID/ASK объемов: {orderbook.get('bid_ask_ratio', 'N/A')}
-Общий объем BID: {orderbook.get('total_bid_volume', 'N/A')}
-Общий объем ASK: {orderbook.get('total_ask_volume', 'N/A')}
+Лучший BID: ${orderbook.get('best_bid', orderbook.get('bids', [[0]])[0][0] if orderbook.get('bids') else 'N/A')}
+Лучший ASK: ${orderbook.get('best_ask', orderbook.get('asks', [[0]])[0][0] if orderbook.get('asks') else 'N/A')}
+Спред: ${orderbook.get('spread', 'N/A')}"""
+
+        # Добавляем данные о сделках если есть
+        if trades and isinstance(trades, dict) and trades.get('total_trades'):
+            prompt += f"""
 
 💹 АНАЛИЗ СДЕЛОК:
 Всего сделок: {trades.get('total_trades', 'N/A')}
 Покупки: {trades.get('buy_trades', 'N/A')}
-Продажи: {trades.get('sell_trades', 'N/A')}
-Соотношение покупок/продаж: {trades.get('buy_sell_ratio', 'N/A')}
-Соотношение объемов: {trades.get('volume_ratio', 'N/A')}
-Тренд цены: {trades.get('price_trend', 'N/A')}
+Продажи: {trades.get('sell_trades', 'N/A')}"""
+
+        # Добавляем данные свечей если есть
+        if klines and len(klines) >= 5:
+            recent_closes = [k.get('close', 0) for k in klines[-5:]]
+            prompt += f"""
+
+🕯️ ПОСЛЕДНИЕ СВЕЧИ (закрытие):
+{[f"${price:.2f}" for price in recent_closes if price > 0]}
+Всего свечей проанализировано: {len(klines)}"""
+
+        # Добавляем статистику если есть
+        if stats:
+            prompt += f"""
+
+📊 СТАТИСТИКА:
+Средняя цена: ${stats.get('avg_price', 'N/A')}
+Средний объем: {stats.get('avg_volume', 'N/A')}
+Ценовой диапазон: ${stats.get('price_range', 'N/A')}"""
+
+        prompt += f"""
 
 ЗАДАЧА: Проведи ГЛУБОКИЙ технический анализ и дай КОНКРЕТНЫЕ рекомендации для фьючерсной торговли:
 
 1. 📊 ТЕХНИЧЕСКИЙ АНАЛИЗ:
-   - Анализ всех индикаторов
+   - Анализ всех доступных индикаторов
    - Определение тренда (краткосрочный, среднесрочный)
    - Уровни поддержки и сопротивления
    - Анализ объемов и активности
@@ -371,7 +431,9 @@ Bollinger Lower: {indicators.get('bb_lower', 'N/A')}
    - Уровни ликвидации
    - События, которые могут повлиять на цену
 
-Отвечай СТРУКТУРИРОВАННО с эмодзи, будь КОНКРЕТНЫМ в ценах и процентах. Это реальная торговля фьючерсами!"""
+Отвечай СТРУКТУРИРОВАННО с эмодзи, будь КОНКРЕТНЫМ в ценах и процентах. Это реальная торговля фьючерсами!
+
+ВРЕМЯ АНАЛИЗА: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"""
 
         return prompt
     
@@ -379,7 +441,11 @@ Bollinger Lower: {indicators.get('bb_lower', 'N/A')}
         """Получение анализа от OpenAI GPT-4"""
         try:
             if not self.client:
-                return "❌ OpenAI клиент не инициализирован"
+                return "OpenAI клиент не инициализирован"
+            
+            # Проверяем промпт
+            if "ОШИБКА:" in prompt:
+                return prompt
             
             # Создаем запрос к GPT-4
             response = await asyncio.get_event_loop().run_in_executor(
@@ -403,24 +469,24 @@ Bollinger Lower: {indicators.get('bb_lower', 'N/A')}
             
             if response and response.choices:
                 analysis = response.choices[0].message.content
-                self.logger.info(f"✅ Получен анализ от GPT-4 ({len(analysis)} символов)")
+                self.logger.info(f"Получен анализ от GPT-4 ({len(analysis)} символов)")
                 return analysis
             else:
-                return "❌ Пустой ответ от OpenAI"
+                return "Пустой ответ от OpenAI"
                 
         except Exception as e:
             error_msg = str(e)
-            self.logger.error(f"❌ Ошибка запроса к OpenAI: {error_msg}")
+            self.logger.error(f"Ошибка запроса к OpenAI: {error_msg}")
             
             # Специфичные ошибки OpenAI
             if "invalid api key" in error_msg.lower():
-                return "❌ НЕВЕРНЫЙ OPENAI_API_KEY! Проверьте ключ в настройках."
+                return "НЕВЕРНЫЙ OPENAI_API_KEY! Проверьте ключ в настройках."
             elif "insufficient_quota" in error_msg.lower():
-                return "❌ Превышен лимит OpenAI API. Проверьте баланс аккаунта."
+                return "Превышен лимит OpenAI API. Проверьте баланс аккаунта."
             elif "rate_limit" in error_msg.lower():
-                return "❌ Превышен лимит запросов OpenAI. Попробуйте позже."
+                return "Превышен лимит запросов OpenAI. Попробуйте позже."
             else:
-                return f"❌ Ошибка OpenAI API: {error_msg}"
+                return f"Ошибка OpenAI API: {error_msg}"
     
     def format_market_data_message(self, market_data: Dict) -> str:
         """Форматирование рыночных данных для телеграма"""
@@ -434,48 +500,62 @@ Bollinger Lower: {indicators.get('bb_lower', 'N/A')}
             
             # Определяем тренд по изменению
             change_24h = basic_market.get("change_24h", "0%")
-            if "%" in str(change_24h):
-                change_value = float(change_24h.replace("%", "").replace("+", ""))
-                trend_emoji = "🚀" if change_value > 2 else "📈" if change_value > 0 else "📉" if change_value < -2 else "➡️"
+            if isinstance(change_24h, str) and "%" in change_24h:
+                try:
+                    change_value = float(change_24h.replace("%", "").replace("+", ""))
+                    trend_emoji = "🚀" if change_value > 2 else "📈" if change_value > 0 else "📉" if change_value < -2 else "➡️"
+                except:
+                    trend_emoji = "📊"
             else:
                 trend_emoji = "📊"
             
             # RSI состояние
-            rsi = indicators.get("rsi", 50)
+            rsi = indicators.get("rsi", 50) if indicators else 50
             rsi_emoji = "🔥" if rsi > 70 else "❄️" if rsi < 30 else "⚖️"
             
             message = f"""
-📊 <b>РЫНОЧНЫЕ ДАННЫЕ - {symbol}</b> {trend_emoji}
+📊 РЫНОЧНЫЕ ДАННЫЕ - {symbol} {trend_emoji}
 
-💰 <b>Цена:</b> <code>${basic_market.get('price', 'N/A')}</code>
-📈 <b>Изменение 24ч:</b> <code>{basic_market.get('change_24h', 'N/A')}</code>
-📊 <b>Объем 24ч:</b> <code>{basic_market.get('volume_24h', 'N/A')}</code>
+💰 Цена: ${basic_market.get('price', 'N/A')}
+📈 Изменение 24ч: {basic_market.get('change_24h', 'N/A')}
+📊 Объем 24ч: {basic_market.get('volume_24h', 'N/A')}
 
-🔝 <b>Максимум 24ч:</b> <code>${basic_market.get('high_24h', 'N/A')}</code>
-🔻 <b>Минимум 24ч:</b> <code>${basic_market.get('low_24h', 'N/A')}</code>
+🔝 Максимум 24ч: ${basic_market.get('high_24h', 'N/A')}
+🔻 Минимум 24ч: ${basic_market.get('low_24h', 'N/A')}"""
 
-📊 <b>ТЕХНИЧЕСКИЕ ИНДИКАТОРЫ:</b>
-{rsi_emoji} <b>RSI:</b> <code>{rsi:.1f}</code>
-📈 <b>MA короткая:</b> <code>{indicators.get('sma_short', 0):.2f}</code>
-📉 <b>MA длинная:</b> <code>{indicators.get('sma_long', 0):.2f}</code>
+            if indicators:
+                message += f"""
 
-📚 <b>ОРДЕРБУК:</b>
-💚 <b>Лучший BID:</b> <code>${orderbook.get('best_bid', 0):.4f}</code>
-❤️ <b>Лучший ASK:</b> <code>${orderbook.get('best_ask', 0):.4f}</code>
-⚡ <b>Спред:</b> <code>${orderbook.get('spread', 0):.4f}</code>
+📊 ТЕХНИЧЕСКИЕ ИНДИКАТОРЫ:
+{rsi_emoji} RSI: {rsi:.1f}
+📈 MA короткая: {indicators.get('sma_short', 0):.2f}
+📉 MA длинная: {indicators.get('sma_long', 0):.2f}"""
 
-💹 <b>АКТИВНОСТЬ:</b>
-🔄 <b>Сделок:</b> <code>{trades.get('total_trades', 0)}</code>
-📊 <b>Покупки/Продажи:</b> <code>{trades.get('buy_trades', 0)}/{trades.get('sell_trades', 0)}</code>
+            if orderbook:
+                message += f"""
 
-🕐 <i>Данные на {datetime.now().strftime('%H:%M:%S')}</i>
+📚 ОРДЕРБУК:
+💚 Лучший BID: ${orderbook.get('best_bid', orderbook.get('bids', [[0]])[0][0] if orderbook.get('bids') else 0):.4f}
+❤️ Лучший ASK: ${orderbook.get('best_ask', orderbook.get('asks', [[0]])[0][0] if orderbook.get('asks') else 0):.4f}
+⚡ Спред: ${orderbook.get('spread', 0):.4f}"""
+
+            if trades and isinstance(trades, dict):
+                message += f"""
+
+💹 АКТИВНОСТЬ:
+🔄 Сделок: {trades.get('total_trades', 0)}
+📊 Покупки/Продажи: {trades.get('buy_trades', 0)}/{trades.get('sell_trades', 0)}"""
+
+            message += f"""
+
+🕐 Данные на {datetime.now().strftime('%H:%M:%S')}
             """
             
             return message.strip()
             
         except Exception as e:
-            self.logger.error(f"❌ Ошибка форматирования данных: {e}")
-            return f"❌ Ошибка форматирования рыночных данных: {e}"
+            self.logger.error(f"Ошибка форматирования данных: {e}")
+            return f"Ошибка форматирования рыночных данных: {e}"
     
     def get_status(self) -> Dict:
         """Получить статус анализатора"""
@@ -486,5 +566,6 @@ Bollinger Lower: {indicators.get('bb_lower', 'N/A')}
             "model": self.model,
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
-            "websocket_manager": self.websocket_manager is not None
+            "websocket_manager": self.websocket_manager is not None,
+            "websocket_connected": self.websocket_manager.is_connected if self.websocket_manager else False
         }
