@@ -24,13 +24,13 @@ from core.websocket_manager import WebSocketManager
 from strategies.base_strategy import BaseStrategy
 from telegram.bot import TelegramBot
 
-# Настройка логирования
+# Настройка логирования (безопасно для Render)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('bot.log')
+        logging.StreamHandler()  # Только console для Render
+        # logging.FileHandler('bot.log')  # Файл логов может вызывать проблемы на Render
     ]
 )
 
