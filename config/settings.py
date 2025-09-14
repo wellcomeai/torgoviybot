@@ -115,7 +115,8 @@ class Settings:
         """Возвращает URL WebSocket в зависимости от режима"""
         if self.BYBIT_WS_TESTNET:
             return "wss://stream-testnet.bybit.com/v5/public/linear"
-        return self.BYBIT_WS_MAINNET_URL
+        else:
+            return "wss://stream.bybit.com/v5/public/linear"
     
     @property
     def is_production(self) -> bool:
@@ -145,7 +146,14 @@ class Settings:
     
     def get_kline_subscription(self) -> str:
         """Возвращает строку подписки на kline данные"""
-        return f"kline.{self.STRATEGY_TIMEFRAME}.{self.TRADING_PAIR}"
+        # Формат: kline.{interval}.{symbol}
+        interval_map = {
+            "1m": "1", "3m": "3", "5m": "5", "15m": "15", 
+            "30m": "30", "1h": "60", "2h": "120", "4h": "240", 
+            "6h": "360", "12h": "720", "1d": "D", "1w": "W"
+        }
+        interval = interval_map.get(self.STRATEGY_TIMEFRAME, "5")
+        return f"kline.{interval}.{self.TRADING_PAIR}"
     
     def get_ticker_subscription(self) -> str:
         """Возвращает строку подписки на ticker данные"""
@@ -154,6 +162,10 @@ class Settings:
     def get_orderbook_subscription(self) -> str:
         """Возвращает строку подписки на orderbook данные"""
         return f"orderbook.50.{self.TRADING_PAIR}"
+    
+    def get_trade_subscription(self) -> str:
+        """Возвращает строку подписки на publicTrade данные"""
+        return f"publicTrade.{self.TRADING_PAIR}"
 
 
 # Глобальный экземпляр настроек
