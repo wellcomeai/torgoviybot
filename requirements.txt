@@ -1,13 +1,13 @@
-# Build dependencies - стабильные версии для Render
-setuptools>=60.0.0,<70.0.0
-wheel>=0.38.0,<0.42.0
-pip>=22.0.0,<24.0.0
+# ВАЖНО: setuptools должен быть первым для Python 3.11
+setuptools==68.2.2
+wheel==0.41.2
+pip==23.3.1
 
 # Core web framework
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
 
-# Configuration and validation - ИСПРАВЛЕНО для Pydantic v2
+# Configuration and validation
 pydantic==2.5.2
 pydantic-settings==2.1.0
 python-dotenv==1.0.0
@@ -15,7 +15,7 @@ python-dotenv==1.0.0
 # WebSocket client
 websockets==12.0
 
-# Telegram bot - стабильная версия
+# Telegram bot
 python-telegram-bot==20.7
 
 # Data processing and math
@@ -25,14 +25,11 @@ numpy==1.24.4
 httpx==0.25.2
 aiohttp==3.9.1
 
-# Async utilities
-anyio==4.0.0
-
 # Date and time utilities
 python-dateutil==2.8.2
 pytz==2023.3
 
-# JSON processing - быстрый JSON парсер
+# JSON processing
 orjson==3.9.10
 
 # Security
@@ -44,18 +41,7 @@ psutil==5.9.6
 # Type hints
 typing-extensions==4.8.0
 
-# Logging utilities (опционально)
-colorlog==6.8.0
-
-# Additional utilities for stability
-packaging>=21.0
-six>=1.16.0
-
-# WebSocket server utilities (если потребуется)
-websocket-client==1.6.4
-
-# Async context managers
+# Additional utilities
+packaging==23.2
+six==1.16.0
 async-timeout==4.0.3
-
-# Better error handling
-rich==13.7.0
