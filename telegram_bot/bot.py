@@ -1,6 +1,6 @@
 """
 Телеграм бот для торговых уведомлений и ИИ-анализа рынка
-Обновлено: исправлена проблема conflict с multiple instances
+Исправлено: error_callback проблема и полная функциональность
 """
 
 import asyncio
@@ -41,7 +41,7 @@ from config.settings import get_settings
 
 
 class TelegramBot:
-    """Телеграм бот для торгового бота с ИИ-анализом рынка (исправлен conflict)"""
+    """Телеграм бот для торгового бота с ИИ-анализом рынка (полностью исправлен)"""
     
     def __init__(self, token: str, chat_id: str, websocket_manager=None, market_analyzer=None):
         self.token = token
@@ -52,16 +52,16 @@ class TelegramBot:
         
         self.application = None
         self.is_running = False
-        self.is_starting = False  # Флаг для предотвращения множественного запуска
+        self.is_starting = False
         
         self.logger = logging.getLogger(__name__)
         
         # Проверяем доступность Telegram
         if not TELEGRAM_AVAILABLE:
-            self.logger.warning(f"⚠️ Telegram библиотека недоступна: {telegram_import_error}")
+            self.logger.warning(f"Telegram библиотека недоступна: {telegram_import_error}")
             return
         
-        self.logger.info("✅ Telegram библиотека обнаружена успешно")
+        self.logger.info("Telegram библиотека обнаружена успешно")
         
         # Состояние бота
         self.notifications_enabled = True
@@ -81,23 +81,23 @@ class TelegramBot:
         self.startup_retry_delay = 5
         
     async def start(self):
-        """Запуск телеграм бота с решением conflict проблемы"""
+        """Запуск телеграм бота с решением всех проблем"""
         if not TELEGRAM_AVAILABLE:
-            self.logger.warning("⚠️ Telegram библиотека недоступна. Пропускаем запуск.")
+            self.logger.warning("Telegram библиотека недоступна. Пропускаем запуск.")
             return
             
         if not self.token or not self.chat_id:
-            self.logger.warning("⚠️ TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID не указаны")
+            self.logger.warning("TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID не указаны")
             return
         
         if self.is_starting or self.is_running:
-            self.logger.warning("⚠️ Telegram бот уже запускается или запущен")
+            self.logger.warning("Telegram бот уже запускается или запущен")
             return
             
         self.is_starting = True
         
         try:
-            self.logger.info("🤖 Запуск Telegram бота с защитой от конфликтов...")
+            self.logger.info("Запуск Telegram бота с защитой от конфликтов...")
             self.logger.info(f"   Token: {self.token[:10]}...")
             self.logger.info(f"   Chat ID: {self.chat_id}")
             
@@ -110,24 +110,24 @@ class TelegramBot:
                     await self._start_bot_instance()
                     break
                 except Conflict as e:
-                    self.logger.warning(f"⚠️ Попытка {attempt + 1}: Конфликт соединений - {e}")
+                    self.logger.warning(f"Попытка {attempt + 1}: Конфликт соединений - {e}")
                     if attempt < self.max_startup_retries - 1:
-                        self.logger.info(f"🔄 Ожидание {self.startup_retry_delay} сек перед повтором...")
+                        self.logger.info(f"Ожидание {self.startup_retry_delay} сек перед повтором...")
                         await asyncio.sleep(self.startup_retry_delay)
                     else:
                         raise
                 except Exception as e:
-                    self.logger.error(f"❌ Попытка {attempt + 1}: Ошибка запуска - {e}")
+                    self.logger.error(f"Попытка {attempt + 1}: Ошибка запуска - {e}")
                     if attempt < self.max_startup_retries - 1:
                         await asyncio.sleep(self.startup_retry_delay)
                     else:
                         raise
             
             self.is_running = True
-            self.logger.info("✅ Telegram бот успешно запущен")
+            self.logger.info("Telegram бот успешно запущен")
             
         except Exception as e:
-            self.logger.error(f"❌ Критическая ошибка запуска Telegram бота: {e}")
+            self.logger.error(f"Критическая ошибка запуска Telegram бота: {e}")
             # Не поднимаем исключение, чтобы не сломать весь бот
         finally:
             self.is_starting = False
@@ -135,7 +135,7 @@ class TelegramBot:
     async def _cleanup_existing_connections(self):
         """Очистка существующих соединений"""
         try:
-            self.logger.info("🧹 Очистка существующих Telegram соединений...")
+            self.logger.info("Очистка существующих Telegram соединений...")
             
             # Создаем временного бота для очистки
             temp_app = Application.builder().token(self.token).build()
@@ -144,25 +144,25 @@ class TelegramBot:
             try:
                 # Получаем информацию о боте
                 bot_info = await temp_app.bot.get_me()
-                self.logger.info(f"🤖 Подключение к боту: @{bot_info.username}")
+                self.logger.info(f"Подключение к боту: @{bot_info.username}")
                 
                 # Удаляем webhook если есть
                 webhook_info = await temp_app.bot.get_webhook_info()
                 if webhook_info.url:
-                    self.logger.info(f"🔗 Удаляем webhook: {webhook_info.url}")
+                    self.logger.info(f"Удаляем webhook: {webhook_info.url}")
                     await temp_app.bot.delete_webhook(drop_pending_updates=True)
                 
                 # Очищаем pending updates
-                self.logger.info("🗑️ Очистка pending updates...")
+                self.logger.info("Очистка pending updates...")
                 await temp_app.bot.get_updates(offset=-1, limit=1, timeout=1)
                 
             except Exception as e:
-                self.logger.warning(f"⚠️ Ошибка при очистке: {e}")
+                self.logger.warning(f"Ошибка при очистке: {e}")
             finally:
                 await temp_app.shutdown()
                 
         except Exception as e:
-            self.logger.warning(f"⚠️ Не удалось выполнить очистку: {e}")
+            self.logger.warning(f"Не удалось выполнить очистку: {e}")
     
     async def _start_bot_instance(self):
         """Запуск экземпляра бота"""
@@ -179,52 +179,48 @@ class TelegramBot:
         await self.application.initialize()
         await self.application.start()
         
-        # Запуск polling с обработкой ошибок
+        # Запуск polling БЕЗ error_callback
         await self.application.updater.start_polling(
-            drop_pending_updates=True,  # Игнорируем старые обновления
-            allowed_updates=Update.ALL_TYPES,
-            error_callback=self._handle_polling_error
+            drop_pending_updates=True,
+            allowed_updates=Update.ALL_TYPES
         )
         
         # Приветственное сообщение
         await self._send_startup_message()
     
-    async def _handle_polling_error(self, update: object, context) -> None:
-        """Обработчик ошибок polling"""
+    def _handle_polling_error(self, update: object, context) -> None:
+        """Обработчик ошибок polling (НЕ async функция!)"""
         try:
             exception = context.error
             
             if isinstance(exception, Conflict):
-                self.logger.error("❌ Конфликт Telegram соединений!")
+                self.logger.error("Конфликт Telegram соединений!")
                 self.logger.error("   Возможные причины:")
                 self.logger.error("   - Запущен другой экземпляр бота")
                 self.logger.error("   - Локальный бот конфликтует с Render")
                 self.logger.error("   - Не завершился предыдущий процесс")
                 
-                # Попытка переподключения через некоторое время
-                await asyncio.sleep(10)
-                
             elif isinstance(exception, NetworkError):
-                self.logger.warning(f"⚠️ Сетевая ошибка: {exception}")
+                self.logger.warning(f"Сетевая ошибка: {exception}")
                 
             else:
-                self.logger.error(f"❌ Ошибка polling: {exception}")
+                self.logger.error(f"Ошибка polling: {exception}")
                 
         except Exception as e:
-            self.logger.error(f"❌ Ошибка в обработчике ошибок: {e}")
+            self.logger.error(f"Ошибка в обработчике ошибок: {e}")
     
     async def _send_startup_message(self):
         """Отправка приветственного сообщения"""
         try:
-            ai_status = "🤖 Включен" if self.market_analyzer and self.settings.is_openai_configured else "❌ Отключен"
+            ai_status = "Включен" if self.market_analyzer and self.settings.is_openai_configured else "Отключен"
             
             startup_text = (
-                "🚀 <b>Торговый бот с ИИ-анализом запущен!</b>\n\n"
-                f"📊 Пара: <code>{self.settings.TRADING_PAIR}</code>\n"
-                f"⏱ Таймфрейм: <code>{self.settings.STRATEGY_TIMEFRAME}</code>\n"
-                f"🎯 Стратегия: <b>RSI + MA</b>\n"
-                f"🤖 ИИ-анализ: {ai_status}\n\n"
-                "Нажмите кнопку ниже для получения ИИ-анализа рынка 👇"
+                "Торговый бот с ИИ-анализом запущен!\n\n"
+                f"Пара: {self.settings.TRADING_PAIR}\n"
+                f"Таймфрейм: {self.settings.STRATEGY_TIMEFRAME}\n"
+                f"Стратегия: RSI + MA\n"
+                f"ИИ-анализ: {ai_status}\n\n"
+                "Нажмите кнопку ниже для получения ИИ-анализа рынка"
             )
             
             await self.send_message(
@@ -233,7 +229,7 @@ class TelegramBot:
             )
             
         except Exception as e:
-            self.logger.warning(f"⚠️ Не удалось отправить приветственное сообщение: {e}")
+            self.logger.warning(f"Не удалось отправить приветственное сообщение: {e}")
     
     async def stop(self):
         """Остановка телеграм бота с правильной очисткой"""
@@ -241,15 +237,15 @@ class TelegramBot:
             return
             
         try:
-            self.logger.info("🛑 Остановка Telegram бота...")
+            self.logger.info("Остановка Telegram бота...")
             
             self.is_running = False
             
             # Отправляем сообщение об остановке
             try:
-                await self.send_message("🛑 <b>Бот остановлен</b>\n\nСервис временно недоступен.")
+                await self.send_message("Бот остановлен\n\nСервис временно недоступен.")
             except:
-                pass  # Игнорируем ошибки при отправке последнего сообщения
+                pass
             
             # Правильная остановка polling
             if self.application.updater.running:
@@ -262,10 +258,10 @@ class TelegramBot:
             # Завершение
             await self.application.shutdown()
             
-            self.logger.info("✅ Telegram бот корректно остановлен")
+            self.logger.info("Telegram бот корректно остановлен")
             
         except Exception as e:
-            self.logger.error(f"❌ Ошибка остановки Telegram бота: {e}")
+            self.logger.error(f"Ошибка остановки Telegram бота: {e}")
     
     async def _register_handlers(self):
         """Регистрация обработчиков команд"""
@@ -285,7 +281,7 @@ class TelegramBot:
         # Обработчик текстовых сообщений
         self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
         
-        # Обработчик ошибок
+        # Обработчик ошибок (обычная функция, НЕ async!)
         self.application.add_error_handler(self._handle_polling_error)
     
     async def _set_bot_commands(self):
@@ -294,11 +290,11 @@ class TelegramBot:
             return
             
         commands = [
-            BotCommand("start", "🚀 Запуск бота"),
-            BotCommand("help", "❓ Помощь"),
-            BotCommand("status", "📊 Статус бота"),
-            BotCommand("market", "🤖 ИИ-анализ рынка"),
-            BotCommand("ai", "🤖 ИИ-анализ рынка")
+            BotCommand("start", "Запуск бота"),
+            BotCommand("help", "Помощь"),
+            BotCommand("status", "Статус бота"),
+            BotCommand("market", "ИИ-анализ рынка"),
+            BotCommand("ai", "ИИ-анализ рынка")
         ]
         
         await self.application.bot.set_my_commands(commands)
@@ -310,7 +306,7 @@ class TelegramBot:
         
         # Проверяем доступность ИИ-анализа
         ai_available = self.market_analyzer and self.settings.is_openai_configured
-        button_text = "🤖 Узнать рынок (ИИ)" if ai_available else "📈 Узнать рынок (базовый)"
+        button_text = "Узнать рынок (ИИ)" if ai_available else "Узнать рынок (базовый)"
         
         keyboard = [
             [
@@ -321,23 +317,23 @@ class TelegramBot:
         # Если ИИ недоступен, добавляем информацию
         if not ai_available:
             keyboard.append([
-                InlineKeyboardButton("ℹ️ Настроить ИИ", callback_data="ai_setup_info")
+                InlineKeyboardButton("Настроить ИИ", callback_data="ai_setup_info")
             ])
         
         return InlineKeyboardMarkup(keyboard)
     
-    # Обработчики команд (остаются теми же)
+    # Обработчики команд
     async def _cmd_start(self, update, context):
         """Команда /start"""
-        ai_status = "🤖 Включен" if self.market_analyzer and self.settings.is_openai_configured else "❌ Отключен"
+        ai_status = "Включен" if self.market_analyzer and self.settings.is_openai_configured else "Отключен"
         
         await update.message.reply_text(
-            "🚀 <b>Добро пожаловать в торговый бот с ИИ-анализом!</b>\n\n"
-            f"📊 Торговая пара: <code>{self.settings.TRADING_PAIR}</code>\n"
-            f"⏱ Таймфрейм: <code>{self.settings.STRATEGY_TIMEFRAME}</code>\n"
-            f"🎯 Стратегия: <b>RSI + Moving Average</b>\n"
-            f"🤖 ИИ-анализ GPT-4: {ai_status}\n\n"
-            "Нажмите кнопку ниже для получения профессионального анализа рынка от ИИ 👇",
+            "Добро пожаловать в торговый бот с ИИ-анализом!\n\n"
+            f"Торговая пара: {self.settings.TRADING_PAIR}\n"
+            f"Таймфрейм: {self.settings.STRATEGY_TIMEFRAME}\n"
+            f"Стратегия: RSI + Moving Average\n"
+            f"ИИ-анализ GPT-4: {ai_status}\n\n"
+            "Нажмите кнопку ниже для получения профессионального анализа рынка от ИИ",
             parse_mode=ParseMode.HTML,
             reply_markup=self._get_main_keyboard()
         )
@@ -345,53 +341,53 @@ class TelegramBot:
     async def _cmd_help(self, update, context):
         """Команда /help"""
         help_text = """
-🆘 <b>Помощь по боту</b>
+Помощь по боту
 
-<b>Основные команды:</b>
+Основные команды:
 /start - Запуск бота
 /help - Эта справка  
 /status - Статус бота
 /market - ИИ-анализ рынка
 /ai - ИИ-анализ рынка
 
-<b>🤖 ИИ-анализ включает:</b>
-- 📊 Технический анализ всех индикаторов
-- 🎯 Конкретные уровни входа, TP и SL
-- 📈 Прогнозы на разные временные горизонты
-- ⚠️ Оценка рисков и возможностей
-- 💡 Профессиональные рекомендации
+ИИ-анализ включает:
+- Технический анализ всех индикаторов
+- Конкретные уровни входа, TP и SL
+- Прогнозы на разные временные горизонты
+- Оценка рисков и возможностей
+- Профессиональные рекомендации
 
-<b>🔗 Источники данных:</b>
+Источники данных:
 - Свечи, объемы, индикаторы
 - Ордербук и активность трейдеров
 - Анализ через GPT-4
 
-⚠️ <b>Важно:</b> ИИ-анализ носит информационный характер!
+Важно: ИИ-анализ носит информационный характер!
         """
         
         await update.message.reply_text(help_text, parse_mode=ParseMode.HTML)
     
     async def _cmd_status(self, update, context):
         """Команда /status"""
-        ai_status = "🟢 Работает" if self.market_analyzer and self.settings.is_openai_configured else "🔴 Отключен"
+        ai_status = "Работает" if self.market_analyzer and self.settings.is_openai_configured else "Отключен"
         ai_model = self.settings.OPENAI_MODEL if self.settings.is_openai_configured else "Не настроен"
         
         status_text = f"""
-📊 <b>Статус бота</b>
+Статус бота
 
-<b>Торговля:</b>
-Пара: <code>{self.settings.TRADING_PAIR}</code>
-Таймфрейм: <code>{self.settings.STRATEGY_TIMEFRAME}</code>
-Режим: <code>{'TESTNET' if self.settings.BYBIT_WS_TESTNET else 'MAINNET'}</code>
+Торговля:
+Пара: {self.settings.TRADING_PAIR}
+Таймфрейм: {self.settings.STRATEGY_TIMEFRAME}
+Режим: {'TESTNET' if self.settings.BYBIT_WS_TESTNET else 'MAINNET'}
 
-<b>WebSocket:</b> {'🟢 Подключен' if self.websocket_manager and self.websocket_manager.is_connected else '🔴 Отключен'}
+WebSocket: {'Подключен' if self.websocket_manager and self.websocket_manager.is_connected else 'Отключен'}
 
-<b>🤖 ИИ-анализ:</b>
+ИИ-анализ:
 Статус: {ai_status}
-Модель: <code>{ai_model}</code>
-Анализ в процессе: {'🔄 Да' if self.ai_analysis_in_progress else '✅ Нет'}
+Модель: {ai_model}
+Анализ в процессе: {'Да' if self.ai_analysis_in_progress else 'Нет'}
 
-<i>Обновлено: {datetime.now().strftime('%H:%M:%S')}</i>
+Обновлено: {datetime.now().strftime('%H:%M:%S')}
         """
         
         await update.message.reply_text(status_text, parse_mode=ParseMode.HTML)
@@ -414,25 +410,25 @@ class TelegramBot:
         elif data == "ai_setup_info":
             # Информация о настройке ИИ
             setup_text = """
-🤖 <b>Настройка ИИ-анализа</b>
+Настройка ИИ-анализа
 
 Для включения ИИ-анализа необходимо:
 
-1️⃣ Получить API ключ OpenAI:
+1. Получить API ключ OpenAI:
    • Перейти на platform.openai.com
    • Создать аккаунт и получить API key
    • Пополнить баланс
 
-2️⃣ Добавить в переменные окружения:
-   <code>OPENAI_API_KEY=sk-your_key_here</code>
+2. Добавить в переменные окружения:
+   OPENAI_API_KEY=sk-your_key_here
 
-3️⃣ Перезапустить бота
+3. Перезапустить бота
 
-<b>💰 Стоимость:</b>
+Стоимость:
 - GPT-4: ~$0.03-0.06 за анализ
 - GPT-3.5: ~$0.002-0.004 за анализ
 
-<b>🎯 Что получите:</b>
+Что получите:
 - Профессиональный технический анализ
 - Конкретные уровни входа и выхода
 - Take Profit и Stop Loss рекомендации
@@ -443,15 +439,15 @@ class TelegramBot:
                 setup_text,
                 parse_mode=ParseMode.HTML,
                 reply_markup=InlineKeyboardMarkup([[
-                    InlineKeyboardButton("⬅️ Назад", callback_data="back_to_main")
+                    InlineKeyboardButton("Назад", callback_data="back_to_main")
                 ]])
             )
             
         elif data == "back_to_main":
             # Возврат к главному меню
             await query.edit_message_text(
-                "🤖 <b>Торговый бот готов к работе!</b>\n\n"
-                "Нажмите кнопку ниже для получения ИИ-анализа рынка 👇",
+                "Торговый бот готов к работе!\n\n"
+                "Нажмите кнопку ниже для получения ИИ-анализа рынка",
                 parse_mode=ParseMode.HTML,
                 reply_markup=self._get_main_keyboard()
             )
@@ -466,7 +462,7 @@ class TelegramBot:
             await self._cmd_status(update, context)
         else:
             await update.message.reply_text(
-                "🤖 <b>Для получения ИИ-анализа рынка:</b>\n\n"
+                "Для получения ИИ-анализа рынка:\n\n"
                 "• Нажмите кнопку ниже\n"
                 "• Или отправьте /market\n"
                 "• Или напишите 'анализ рынка'\n\n"
@@ -481,7 +477,7 @@ class TelegramBot:
             # Проверка кулдауна
             if self._is_analysis_cooldown():
                 await self.send_message(
-                    f"⏳ <b>Анализ выполняется слишком часто</b>\n\n"
+                    f"Анализ выполняется слишком часто\n\n"
                     f"Подождите {self.settings.AI_ANALYSIS_COOLDOWN_MINUTES} минут между запросами",
                     chat_id=chat_id
                 )
@@ -490,7 +486,7 @@ class TelegramBot:
             # Проверка, что анализ не выполняется
             if self.ai_analysis_in_progress:
                 await self.send_message(
-                    "🔄 <b>Анализ уже выполняется</b>\n\nПодождите завершения текущего анализа...",
+                    "Анализ уже выполняется\n\nПодождите завершения текущего анализа...",
                     chat_id=chat_id
                 )
                 return
@@ -498,7 +494,7 @@ class TelegramBot:
             # Проверка доступности компонентов
             if not self.market_analyzer:
                 await self.send_message(
-                    "❌ <b>ИИ-анализатор не инициализирован</b>\n\n"
+                    "ИИ-анализатор не инициализирован\n\n"
                     "Проверьте настройки OPENAI_API_KEY и перезапустите бота",
                     chat_id=chat_id
                 )
@@ -506,9 +502,9 @@ class TelegramBot:
             
             if not self.settings.is_openai_configured:
                 await self.send_message(
-                    "❌ <b>OpenAI не настроен</b>\n\n"
+                    "OpenAI не настроен\n\n"
                     "Добавьте OPENAI_API_KEY в переменные окружения:\n"
-                    "<code>OPENAI_API_KEY=sk-your_key_here</code>\n\n"
+                    "OPENAI_API_KEY=sk-your_key_here\n\n"
                     "Получить ключ: https://platform.openai.com",
                     parse_mode=ParseMode.HTML,
                     chat_id=chat_id
@@ -521,11 +517,11 @@ class TelegramBot:
             
             # Отправляем сообщение о начале анализа
             await self.send_message(
-                "🤖 <b>Запуск ИИ-анализа рынка...</b>\n\n"
-                "🔍 Собираю рыночные данные...\n"
-                "📊 Анализирую индикаторы...\n"
-                "🧠 Отправляю в GPT-4...\n\n"
-                "⏳ Это может занять 10-30 секунд",
+                "Запуск ИИ-анализа рынка...\n\n"
+                "Собираю рыночные данные...\n"
+                "Анализирую индикаторы...\n"
+                "Отправляю в GPT-4...\n\n"
+                "Это может занять 10-30 секунд",
                 chat_id=chat_id
             )
             
@@ -535,7 +531,7 @@ class TelegramBot:
             # Проверяем результаты
             if not market_data and not ai_analysis:
                 await self.send_message(
-                    "❌ <b>Не удалось выполнить анализ</b>\n\n"
+                    "Не удалось выполнить анализ\n\n"
                     "Возможные причины:\n"
                     "• Нет подключения к рынку\n"
                     "• Проблемы с OpenAI API\n"
@@ -551,30 +547,30 @@ class TelegramBot:
                 await self.send_message(market_message, chat_id=chat_id)
             
             # Отправляем ИИ-анализ (второе сообщение)
-            if ai_analysis and not ai_analysis.startswith("❌"):
-                analysis_message = f"🤖 <b>ИИ-АНАЛИЗ РЫНКА (GPT-4)</b>\n\n{ai_analysis}"
+            if ai_analysis and not ai_analysis.startswith("Ошибка"):
+                analysis_message = f"ИИ-АНАЛИЗ РЫНКА (GPT-4)\n\n{ai_analysis}"
                 await self.send_message(analysis_message, chat_id=chat_id)
                 
                 # Добавляем кнопку для повторного анализа
                 await self.send_message(
-                    "✅ <b>Анализ завершен!</b>\n\n"
-                    "Для получения нового анализа нажмите кнопку ниже 👇",
+                    "Анализ завершен!\n\n"
+                    "Для получения нового анализа нажмите кнопку ниже",
                     reply_markup=self._get_main_keyboard(),
                     chat_id=chat_id
                 )
             else:
                 # Ошибка в анализе
-                error_message = ai_analysis if ai_analysis else "❌ Не удалось получить ИИ-анализ"
+                error_message = ai_analysis if ai_analysis else "Не удалось получить ИИ-анализ"
                 await self.send_message(error_message, chat_id=chat_id)
             
-            self.logger.info(f"✅ ИИ-анализ рынка завершен для чата {chat_id}")
+            self.logger.info(f"ИИ-анализ рынка завершен для чата {chat_id}")
             
         except Exception as e:
-            self.logger.error(f"❌ Ошибка выполнения ИИ-анализа: {e}")
+            self.logger.error(f"Ошибка выполнения ИИ-анализа: {e}")
             await self.send_message(
-                f"❌ <b>Ошибка анализа</b>\n\n"
+                f"Ошибка анализа\n\n"
                 f"Произошла неожиданная ошибка:\n"
-                f"<code>{str(e)}</code>\n\n"
+                f"{str(e)}\n\n"
                 f"Попробуйте позже или обратитесь к администратору",
                 parse_mode=ParseMode.HTML,
                 chat_id=chat_id
@@ -596,7 +592,7 @@ class TelegramBot:
     async def send_signal_notification(self, signal_data: dict):
         """Отправка уведомления о торговом сигнале"""
         if not TELEGRAM_AVAILABLE or not self.is_running:
-            self.logger.info(f"📤 [Telegram недоступен] Сигнал: {signal_data.get('signal_type', 'N/A')} {signal_data.get('symbol', 'N/A')}")
+            self.logger.info(f"[Telegram недоступен] Сигнал: {signal_data.get('signal_type', 'N/A')} {signal_data.get('symbol', 'N/A')}")
             return
             
         try:
@@ -617,29 +613,29 @@ class TelegramBot:
             confidence_stars = "⭐" * min(5, int(confidence * 5))
             
             text = f"""
-🚨 <b>ТОРГОВЫЙ СИГНАЛ!</b>
+ТОРГОВЫЙ СИГНАЛ!
 
-{signal_emoji} <b>{signal_type} {signal_data.get('symbol', '')}</b>
+{signal_emoji} {signal_type} {signal_data.get('symbol', '')}
 
-💰 <b>Цена:</b> <code>${signal_data.get('price', 0):.4f}</code>
-🎯 <b>Уверенность:</b> <code>{confidence:.1%}</code> {confidence_stars}
-⏰ <b>Время:</b> {datetime.now().strftime('%H:%M:%S')}
+Цена: ${signal_data.get('price', 0):.4f}
+Уверенность: {confidence:.1%} {confidence_stars}
+Время: {datetime.now().strftime('%H:%M:%S')}
 
-💭 <b>Причина:</b> {signal_data.get('reason', 'Нет описания')}
+Причина: {signal_data.get('reason', 'Нет описания')}
 
-⚠️ <i>Торгуйте ответственно!</i>
+Торгуйте ответственно!
             """
             
             await self.send_message(text)
-            self.logger.info(f"📤 Отправлено уведомление о сигнале: {signal_type} {signal_data.get('symbol', '')}")
+            self.logger.info(f"Отправлено уведомление о сигнале: {signal_type} {signal_data.get('symbol', '')}")
             
         except Exception as e:
-            self.logger.error(f"❌ Ошибка отправки уведомления: {e}")
+            self.logger.error(f"Ошибка отправки уведомления: {e}")
     
     async def send_message(self, text: str, reply_markup=None, chat_id: Optional[int] = None):
         """Отправка сообщения в чат с обработкой ошибок"""
         if not TELEGRAM_AVAILABLE or not self.application or not self.is_running:
-            self.logger.info(f"📤 [Telegram недоступен] {text[:100]}...")
+            self.logger.info(f"[Telegram недоступен] {text[:100]}...")
             return
             
         try:
@@ -652,9 +648,9 @@ class TelegramBot:
                 reply_markup=reply_markup
             )
         except Conflict as e:
-            self.logger.error(f"❌ Конфликт при отправке сообщения: {e}")
+            self.logger.error(f"Конфликт при отправке сообщения: {e}")
         except Exception as e:
-            self.logger.error(f"❌ Ошибка отправки сообщения Telegram: {e}")
+            self.logger.error(f"Ошибка отправки сообщения Telegram: {e}")
     
     def get_bot_status(self) -> dict:
         """Получить статус телеграм бота"""
