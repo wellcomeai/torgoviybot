@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     
     # Настройки логирования
     LOG_LEVEL: str = Field(default="INFO", env="LOG_LEVEL")
-    LOG_FILE: str = Field(default="bot.log", env="LOG_FILE")
+    # LOG_FILE убираем для совместимости с Render
     
     # Настройки WebSocket
     WS_PING_INTERVAL: int = Field(default=20, env="WS_PING_INTERVAL")  # секунды
