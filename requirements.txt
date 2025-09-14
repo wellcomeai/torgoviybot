@@ -12,6 +12,6 @@ httpx==0.27.0
 
 # Basic utilities - только самое необходимое
 python-dotenv==1.0.1
-
+openai>=1.0.0
 
 python-telegram-bot==21.0.1
