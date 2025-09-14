@@ -4,8 +4,9 @@ services:
     env: python
     plan: free
     buildCommand: |
+      echo "🚀 Building without Pydantic..."
       pip install --upgrade pip
-      pip install -r requirements.txt --no-cache-dir --only-binary=all || pip install -r requirements.txt --no-cache-dir
+      pip install -r requirements.txt --only-binary=all --no-cache-dir
     startCommand: python main.py
     envVars:
       - key: BYBIT_WS_TESTNET
