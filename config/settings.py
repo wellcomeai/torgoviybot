@@ -1,69 +1,93 @@
 """
 Настройки торгового бота
-Конфигурация для всех компонентов
+Конфигурация для всех компонентов (БЕЗ Pydantic)
 """
 
 import os
+from dataclasses import dataclass
 from typing import Optional
-from pydantic import BaseSettings
-from pydantic import Field
 
 
-class Settings(BaseSettings):
-    """Настройки приложения"""
+def get_env_bool(key: str, default: bool = False) -> bool:
+    """Получить boolean значение из переменной окружения"""
+    value = os.getenv(key, str(default)).lower()
+    return value in ('true', '1', 'yes', 'on')
+
+
+def get_env_int(key: str, default: int = 0) -> int:
+    """Получить int значение из переменной окружения"""
+    try:
+        return int(os.getenv(key, str(default)))
+    except ValueError:
+        return default
+
+
+def get_env_float(key: str, default: float = 0.0) -> float:
+    """Получить float значение из переменной окружения"""
+    try:
+        return float(os.getenv(key, str(default)))
+    except ValueError:
+        return default
+
+
+@dataclass
+class Settings:
+    """Настройки приложения (БЕЗ Pydantic)"""
     
-    # Основные настройки
-    APP_NAME: str = "Bybit Trading Bot"
-    APP_VERSION: str = "1.0.0"
-    DEBUG: bool = Field(default=False, env="DEBUG")
-    
-    # Настройки торговли
-    TRADING_PAIR: str = Field(default="BTCUSDT", env="TRADING_PAIR")
-    STRATEGY_TIMEFRAME: str = Field(default="5m", env="STRATEGY_TIMEFRAME")  # 1m, 3m, 5m, 15m, 30m, 1h, 4h, 1d
-    
-    # Bybit WebSocket настройки
-    BYBIT_WS_TESTNET: bool = Field(default=True, env="BYBIT_WS_TESTNET")
-    BYBIT_WS_LINEAR_URL: str = Field(
-        default="wss://stream-testnet.bybit.com/v5/public/linear",
-        env="BYBIT_WS_LINEAR_URL"
-    )
-    BYBIT_WS_MAINNET_URL: str = "wss://stream.bybit.com/v5/public/linear"
-    
-    # Настройки стратегии RSI + MA
-    RSI_PERIOD: int = Field(default=14, env="RSI_PERIOD")
-    RSI_OVERSOLD: float = Field(default=30.0, env="RSI_OVERSOLD")
-    RSI_OVERBOUGHT: float = Field(default=70.0, env="RSI_OVERBOUGHT")
-    
-    MA_SHORT_PERIOD: int = Field(default=9, env="MA_SHORT_PERIOD")
-    MA_LONG_PERIOD: int = Field(default=21, env="MA_LONG_PERIOD")
-    
-    # Минимальная уверенность для сигнала (0.0 - 1.0)
-    MIN_SIGNAL_CONFIDENCE: float = Field(default=0.7, env="MIN_SIGNAL_CONFIDENCE")
-    
-    # Telegram настройки
-    TELEGRAM_BOT_TOKEN: Optional[str] = Field(default=None, env="TELEGRAM_BOT_TOKEN")
-    TELEGRAM_CHAT_ID: Optional[str] = Field(default=None, env="TELEGRAM_CHAT_ID")
-    
-    # Настройки логирования
-    LOG_LEVEL: str = Field(default="INFO", env="LOG_LEVEL")
-    # LOG_FILE убираем для совместимости с Render
-    
-    # Настройки WebSocket
-    WS_PING_INTERVAL: int = Field(default=20, env="WS_PING_INTERVAL")  # секунды
-    WS_RECONNECT_ATTEMPTS: int = Field(default=5, env="WS_RECONNECT_ATTEMPTS")
-    WS_RECONNECT_DELAY: int = Field(default=5, env="WS_RECONNECT_DELAY")  # секунды
-    
-    # Настройки данных
-    KLINE_LIMIT: int = Field(default=100, env="KLINE_LIMIT")  # Количество свечей для анализа
-    DATA_RETENTION_HOURS: int = Field(default=24, env="DATA_RETENTION_HOURS")
-    
-    # Настройки уведомлений
-    NOTIFY_ALL_SIGNALS: bool = Field(default=True, env="NOTIFY_ALL_SIGNALS")
-    NOTIFY_HIGH_CONFIDENCE_ONLY: bool = Field(default=False, env="NOTIFY_HIGH_CONFIDENCE_ONLY")
-    
-    # Настройки безопасности
-    MAX_DAILY_SIGNALS: int = Field(default=100, env="MAX_DAILY_SIGNALS")
-    SIGNAL_COOLDOWN_MINUTES: int = Field(default=5, env="SIGNAL_COOLDOWN_MINUTES")
+    def __init__(self):
+        """Инициализация настроек из переменных окружения"""
+        
+        # Основные настройки
+        self.APP_NAME: str = "Bybit Trading Bot"
+        self.APP_VERSION: str = "1.0.0"
+        self.DEBUG: bool = get_env_bool("DEBUG", False)
+        
+        # Настройки торговли
+        self.TRADING_PAIR: str = os.getenv("TRADING_PAIR", "BTCUSDT")
+        self.STRATEGY_TIMEFRAME: str = os.getenv("STRATEGY_TIMEFRAME", "5m")
+        
+        # Bybit WebSocket настройки
+        self.BYBIT_WS_TESTNET: bool = get_env_bool("BYBIT_WS_TESTNET", True)
+        self.BYBIT_WS_LINEAR_URL: str = os.getenv(
+            "BYBIT_WS_LINEAR_URL", 
+            "wss://stream-testnet.bybit.com/v5/public/linear"
+        )
+        self.BYBIT_WS_MAINNET_URL: str = "wss://stream.bybit.com/v5/public/linear"
+        
+        # Настройки стратегии RSI + MA
+        self.RSI_PERIOD: int = get_env_int("RSI_PERIOD", 14)
+        self.RSI_OVERSOLD: float = get_env_float("RSI_OVERSOLD", 30.0)
+        self.RSI_OVERBOUGHT: float = get_env_float("RSI_OVERBOUGHT", 70.0)
+        
+        self.MA_SHORT_PERIOD: int = get_env_int("MA_SHORT_PERIOD", 9)
+        self.MA_LONG_PERIOD: int = get_env_int("MA_LONG_PERIOD", 21)
+        
+        # Минимальная уверенность для сигнала (0.0 - 1.0)
+        self.MIN_SIGNAL_CONFIDENCE: float = get_env_float("MIN_SIGNAL_CONFIDENCE", 0.7)
+        
+        # Telegram настройки
+        self.TELEGRAM_BOT_TOKEN: Optional[str] = os.getenv("TELEGRAM_BOT_TOKEN")
+        self.TELEGRAM_CHAT_ID: Optional[str] = os.getenv("TELEGRAM_CHAT_ID")
+        
+        # Настройки логирования
+        self.LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+        
+        # Настройки WebSocket
+        self.WS_PING_INTERVAL: int = get_env_int("WS_PING_INTERVAL", 20)
+        self.WS_RECONNECT_ATTEMPTS: int = get_env_int("WS_RECONNECT_ATTEMPTS", 5)
+        self.WS_RECONNECT_DELAY: int = get_env_int("WS_RECONNECT_DELAY", 5)
+        
+        # Настройки данных
+        self.KLINE_LIMIT: int = get_env_int("KLINE_LIMIT", 100)
+        self.DATA_RETENTION_HOURS: int = get_env_int("DATA_RETENTION_HOURS", 24)
+        
+        # Настройки уведомлений
+        self.NOTIFY_ALL_SIGNALS: bool = get_env_bool("NOTIFY_ALL_SIGNALS", True)
+        self.NOTIFY_HIGH_CONFIDENCE_ONLY: bool = get_env_bool("NOTIFY_HIGH_CONFIDENCE_ONLY", False)
+        
+        # Настройки безопасности
+        self.MAX_DAILY_SIGNALS: int = get_env_int("MAX_DAILY_SIGNALS", 100)
+        self.SIGNAL_COOLDOWN_MINUTES: int = get_env_int("SIGNAL_COOLDOWN_MINUTES", 5)
     
     @property
     def websocket_url(self) -> str:
@@ -88,11 +112,6 @@ class Settings(BaseSettings):
     def get_orderbook_subscription(self) -> str:
         """Возвращает строку подписки на orderbook данные"""
         return f"orderbook.50.{self.TRADING_PAIR}"
-    
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = True
 
 
 # Глобальный экземпляр настроек
@@ -104,13 +123,20 @@ def get_settings() -> Settings:
     global _settings
     
     if _settings is None:
+        # Загружаем .env файл если есть
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()
+        except ImportError:
+            pass  # dotenv не обязательный
+        
         _settings = Settings()
         
         # Логирование загруженных настроек
         import logging
         logger = logging.getLogger(__name__)
         
-        logger.info(f"🔧 Настройки загружены:")
+        logger.info(f"🔧 Настройки загружены (БЕЗ Pydantic):")
         logger.info(f"   Торговая пара: {_settings.TRADING_PAIR}")
         logger.info(f"   Таймфрейм: {_settings.STRATEGY_TIMEFRAME}")
         logger.info(f"   Режим: {'TESTNET' if _settings.BYBIT_WS_TESTNET else 'MAINNET'}")
