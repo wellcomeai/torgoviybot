@@ -1,6 +1,6 @@
 """
 Телеграм бот для торговых уведомлений и управления
-Обработка команд, кнопок и отправка сигналов (ОПЦИОНАЛЬНЫЙ)
+Обработка команд, кнопок и отправка сигналов (исправленная детекция)
 """
 
 import asyncio
@@ -10,37 +10,38 @@ from typing import Optional, Dict, Any
 import html
 import json
 
-# Опциональный импорт Telegram библиотеки
+# Пошаговая детекция Telegram библиотеки
+TELEGRAM_AVAILABLE = False
+telegram_import_error = None
+
 try:
-    from telegram import (
-        Update, 
-        InlineKeyboardButton, 
-        InlineKeyboardMarkup,
-        BotCommand
-    )
-    from telegram.ext import (
-        Application,
-        CommandHandler,
-        CallbackQueryHandler,
-        MessageHandler,
-        filters,
-        ContextTypes
-    )
-    from telegram.constants import ParseMode
-    from telegram.error import TelegramError
-    
+    import telegram
+    from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
     TELEGRAM_AVAILABLE = True
-except ImportError:
-    TELEGRAM_AVAILABLE = False
-    # Создаем заглушки для типов
-    Update = None
-    ContextTypes = None
+except ImportError as e:
+    telegram_import_error = str(e)
+
+if TELEGRAM_AVAILABLE:
+    try:
+        from telegram.ext import (
+            Application,
+            CommandHandler,
+            CallbackQueryHandler,
+            MessageHandler,
+            filters,
+            ContextTypes
+        )
+        from telegram.constants import ParseMode
+        from telegram.error import TelegramError
+    except ImportError as e:
+        TELEGRAM_AVAILABLE = False
+        telegram_import_error = str(e)
 
 from config.settings import get_settings
 
 
 class TelegramBot:
-    """Телеграм бот для торгового бота (опциональный)"""
+    """Телеграм бот для торгового бота (исправленная детекция)"""
     
     def __init__(self, token: str, chat_id: str, websocket_manager=None):
         self.token = token
@@ -55,8 +56,10 @@ class TelegramBot:
         
         # Проверяем доступность Telegram
         if not TELEGRAM_AVAILABLE:
-            self.logger.warning("⚠️ python-telegram-bot не установлен. Telegram бот недоступен.")
+            self.logger.warning(f"⚠️ Telegram библиотека недоступна: {telegram_import_error}")
             return
+        
+        self.logger.info("✅ Telegram библиотека обнаружена успешно")
         
         # Состояние бота
         self.notifications_enabled = True
@@ -72,8 +75,14 @@ class TelegramBot:
             self.logger.warning("⚠️ Telegram библиотека недоступна. Пропускаем запуск.")
             return
             
+        if not self.token or not self.chat_id:
+            self.logger.warning("⚠️ TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID не указаны")
+            return
+            
         try:
             self.logger.info("🤖 Запуск Telegram бота...")
+            self.logger.info(f"   Token: {self.token[:10]}...")
+            self.logger.info(f"   Chat ID: {self.chat_id}")
             
             # Создание приложения
             self.application = Application.builder().token(self.token).build()
@@ -101,11 +110,11 @@ class TelegramBot:
                 reply_markup=self._get_main_keyboard()
             )
             
-            self.logger.info("✅ Telegram бот запущен")
+            self.logger.info("✅ Telegram бот успешно запущен")
             
         except Exception as e:
             self.logger.error(f"❌ Ошибка запуска Telegram бота: {e}")
-            raise
+            # Не поднимаем исключение, чтобы не сломать весь бот
     
     async def stop(self):
         """Остановка телеграм бота"""
@@ -206,7 +215,7 @@ class TelegramBot:
         ]
         return InlineKeyboardMarkup(keyboard)
     
-    # Обработчики команд (урезанная версия)
+    # Обработчики команд
     async def _cmd_start(self, update, context):
         """Команда /start"""
         await update.message.reply_text(
@@ -226,8 +235,10 @@ class TelegramBot:
 
 <b>Команды:</b>
 /start - Запуск бота
-/help - Эта справка
+/help - Эта справка  
 /status - Статус бота
+/market - Рыночные данные
+/signals - Последние сигналы
 
 <b>Торговые сигналы:</b>
 • 🟢 <b>BUY</b> - Сигнал на покупку
@@ -248,6 +259,8 @@ class TelegramBot:
 Таймфрейм: <code>{self.settings.STRATEGY_TIMEFRAME}</code>
 Режим: <code>{'TESTNET' if self.settings.BYBIT_WS_TESTNET else 'MAINNET'}</code>
 
+<b>WebSocket:</b> {'🟢 Подключен' if self.websocket_manager and self.websocket_manager.is_connected else '🔴 Отключен'}
+
 <i>Обновлено: {datetime.now().strftime('%H:%M:%S')}</i>
         """
         
@@ -255,38 +268,159 @@ class TelegramBot:
     
     async def _cmd_market(self, update, context):
         """Команда /market"""
-        await update.message.reply_text("📈 Рыночные данные временно недоступны")
+        try:
+            if self.websocket_manager:
+                market_data = self.websocket_manager.get_market_data()
+                if market_data:
+                    trend_emoji = {"bullish": "📈", "bearish": "📉", "sideways": "➡️"}.get(market_data.get("trend", "sideways"), "➡️")
+                    
+                    text = f"""
+📈 <b>Рыночные данные - {market_data.get('symbol', 'N/A')}</b>
+
+💰 <b>Цена:</b> <code>${market_data.get('price', 'N/A')}</code>
+📊 <b>Изменение 24ч:</b> <code>{market_data.get('change_24h', 'N/A')}</code>
+📈 <b>Макс 24ч:</b> <code>${market_data.get('high_24h', 'N/A')}</code>
+📉 <b>Мин 24ч:</b> <code>${market_data.get('low_24h', 'N/A')}</code>
+💹 <b>Объем 24ч:</b> <code>{market_data.get('volume_24h', 'N/A')}</code>
+
+{trend_emoji} <b>Тренд:</b> {market_data.get('trend', 'N/A').title()}
+
+<i>🕐 Обновлено: {datetime.now().strftime('%H:%M:%S')}</i>
+                    """
+                    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+                    return
+            
+            await update.message.reply_text("❌ Рыночные данные временно недоступны")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Ошибка получения данных: {e}")
     
     async def _cmd_signals(self, update, context):
         """Команда /signals"""
-        await update.message.reply_text("🎯 Сигналы временно недоступны")
+        try:
+            if self.websocket_manager and self.websocket_manager.strategy:
+                signals = self.websocket_manager.strategy.get_recent_signals(limit=5)
+                
+                if signals:
+                    text = "🎯 <b>Последние торговые сигналы:</b>\n\n"
+                    
+                    for i, signal in enumerate(reversed(signals), 1):
+                        signal_emoji = "🟢" if signal['signal_type'] == "BUY" else "🔴"
+                        confidence_percent = signal['confidence'] * 100
+                        
+                        signal_time = datetime.fromisoformat(signal['timestamp'].replace('Z', '+00:00')) if isinstance(signal['timestamp'], str) else signal['timestamp']
+                        time_str = signal_time.strftime('%H:%M:%S')
+                        
+                        text += f"{i}. {signal_emoji} <b>{signal['signal_type']}</b> @ <code>${signal['price']:.4f}</code>\n"
+                        text += f"   🎯 Уверенность: <b>{confidence_percent:.1f}%</b>\n"
+                        text += f"   ⏰ Время: {time_str}\n\n"
+                    
+                    text += f"<i>Всего сигналов: {len(signals)}</i>"
+                    await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+                    return
+            
+            await update.message.reply_text("📭 <b>Нет недавних сигналов</b>\n\nСигналы появятся после анализа рыночных данных.", parse_mode=ParseMode.HTML)
+        except Exception as e:
+            await update.message.reply_text(f"❌ Ошибка получения сигналов: {e}")
     
     async def _cmd_settings(self, update, context):
         """Команда /settings"""
-        await update.message.reply_text("⚙️ Настройки временно недоступны")
+        settings_text = f"""
+⚙️ <b>Настройки бота</b>
+
+<b>Уведомления:</b> {'🔔 Включены' if self.user_settings['notifications'] else '🔕 Отключены'}
+<b>Типы сигналов:</b> {', '.join(self.user_settings['signal_types'])}
+<b>Мин. уверенность:</b> {self.user_settings['min_confidence']:.0%}
+
+Используйте кнопки ниже для изменения настроек:
+        """
+        
+        await update.message.reply_text(
+            settings_text,
+            parse_mode=ParseMode.HTML,
+            reply_markup=self._get_settings_keyboard()
+        )
     
     async def _cmd_strategy(self, update, context):
         """Команда /strategy"""
-        await update.message.reply_text("📊 Статус стратегии временно недоступен")
+        try:
+            if self.websocket_manager and self.websocket_manager.strategy:
+                status = self.websocket_manager.strategy.get_status()
+                current_data = self.websocket_manager.strategy.get_current_data()
+                indicators = current_data.get('current_indicators', {})
+                
+                text = f"""
+📊 <b>Статус стратегии</b>
+
+<b>Основное:</b>
+Стратегия: {status['strategy_name']}
+Пара: <code>{status['symbol']}</code>
+Таймфрейм: <code>{status['timeframe']}</code>
+Статус: {'🟢 Активна' if status['is_active'] else '🔴 Неактивна'}
+
+<b>Данные:</b>
+Точек данных: {status['data_points']}
+Всего сигналов: {status['total_signals']}
+Сигналов сегодня: {status['signals_today']}
+
+<b>Текущие индикаторы:</b>
+RSI: <code>{indicators.get('rsi', 0):.1f}</code>
+MA короткая: <code>{indicators.get('sma_short', 0):.2f}</code>
+MA длинная: <code>{indicators.get('sma_long', 0):.2f}</code>
+
+<i>Обновлено: {datetime.now().strftime('%H:%M:%S')}</i>
+                """
+                await update.message.reply_text(text, parse_mode=ParseMode.HTML)
+                return
+            
+            await update.message.reply_text("❌ Стратегия не инициализирована")
+        except Exception as e:
+            await update.message.reply_text(f"❌ Ошибка получения статуса стратегии: {e}")
     
     async def _handle_callback(self, update, context):
         """Обработка нажатий на кнопки"""
         query = update.callback_query
         await query.answer()
-        await query.edit_message_text("🔄 Функция в разработке")
+        
+        data = query.data
+        
+        if data == "toggle_notifications":
+            self.user_settings["notifications"] = not self.user_settings["notifications"]
+            status = "включены" if self.user_settings["notifications"] else "отключены"
+            
+            await query.edit_message_text(
+                f"⚙️ <b>Настройки бота</b>\n\n"
+                f"✅ Уведомления {status}!\n\n"
+                f"<b>Уведомления:</b> {'🔔 Включены' if self.user_settings['notifications'] else '🔕 Отключены'}",
+                parse_mode=ParseMode.HTML,
+                reply_markup=self._get_settings_keyboard()
+            )
+        else:
+            await query.edit_message_text("🔄 Функция в разработке")
     
     async def _handle_message(self, update, context):
         """Обработка текстовых сообщений"""
-        await update.message.reply_text(
-            "🤔 Используйте /help для справки",
-            reply_markup=self._get_main_keyboard()
-        )
+        text = update.message.text.lower()
+        
+        if "статус" in text or "status" in text:
+            await self._cmd_status(update, context)
+        elif "рынок" in text or "market" in text:
+            await self._cmd_market(update, context)
+        elif "сигнал" in text or "signal" in text:
+            await self._cmd_signals(update, context)
+        else:
+            await update.message.reply_text(
+                "🤔 Используйте /help для справки или команды:\n"
+                "/status - статус бота\n"
+                "/market - рыночные данные\n"
+                "/signals - последние сигналы",
+                reply_markup=self._get_main_keyboard()
+            )
     
     # Отправка уведомлений
     async def send_signal_notification(self, signal_data: dict):
         """Отправка уведомления о торговом сигнале"""
-        if not TELEGRAM_AVAILABLE:
-            self.logger.info("📤 Telegram недоступен, сигнал пропущен")
+        if not TELEGRAM_AVAILABLE or not self.is_running:
+            self.logger.info(f"📤 [Telegram недоступен] Сигнал: {signal_data.get('signal_type', 'N/A')} {signal_data.get('symbol', 'N/A')}")
             return
             
         try:
@@ -304,6 +438,7 @@ class TelegramBot:
             
             # Форматируем сообщение
             signal_emoji = "🟢" if signal_type == "BUY" else "🔴" if signal_type == "SELL" else "🔵"
+            confidence_stars = "⭐" * min(5, int(confidence * 5))
             
             text = f"""
 🚨 <b>ТОРГОВЫЙ СИГНАЛ!</b>
@@ -311,7 +446,7 @@ class TelegramBot:
 {signal_emoji} <b>{signal_type} {signal_data.get('symbol', '')}</b>
 
 💰 <b>Цена:</b> <code>${signal_data.get('price', 0):.4f}</code>
-🎯 <b>Уверенность:</b> <code>{confidence:.1%}</code>
+🎯 <b>Уверенность:</b> <code>{confidence:.1%}</code> {confidence_stars}
 ⏰ <b>Время:</b> {datetime.now().strftime('%H:%M:%S')}
 
 💭 <b>Причина:</b> {signal_data.get('reason', 'Нет описания')}
@@ -320,7 +455,7 @@ class TelegramBot:
             """
             
             await self.send_message(text)
-            self.logger.info(f"📤 Отправлено уведомление о сигнале: {signal_type}")
+            self.logger.info(f"📤 Отправлено уведомление о сигнале: {signal_type} {signal_data.get('symbol', '')}")
             
         except Exception as e:
             self.logger.error(f"❌ Ошибка отправки уведомления: {e}")
