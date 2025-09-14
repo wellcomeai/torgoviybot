@@ -1,10 +1,10 @@
 """
 Базовая торговая стратегия
-RSI + Moving Average стратегия для фьючерсов
+RSI + Moving Average стратегия для фьючерсов (БЕЗ numpy)
 """
 
 import logging
-import numpy as np
+import math
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
@@ -27,7 +27,7 @@ class TradingSignal:
 
 
 class TechnicalIndicators:
-    """Технические индикаторы для анализа"""
+    """Технические индикаторы для анализа (БЕЗ numpy)"""
     
     @staticmethod
     def sma(data: List[float], period: int) -> float:
@@ -53,7 +53,7 @@ class TechnicalIndicators:
     
     @staticmethod
     def rsi(data: List[float], period: int = 14) -> float:
-        """Relative Strength Index"""
+        """Relative Strength Index (БЕЗ numpy)"""
         if len(data) < period + 1:
             return 50.0  # Нейтральное значение
         
@@ -85,7 +85,7 @@ class TechnicalIndicators:
     
     @staticmethod
     def macd(data: List[float], fast: int = 12, slow: int = 26, signal: int = 9) -> Dict[str, float]:
-        """MACD индикатор"""
+        """MACD индикатор (БЕЗ numpy)"""
         if len(data) < slow:
             return {"macd": 0, "signal": 0, "histogram": 0}
         
@@ -106,24 +106,37 @@ class TechnicalIndicators:
     
     @staticmethod
     def bollinger_bands(data: List[float], period: int = 20, std_dev: int = 2) -> Dict[str, float]:
-        """Полосы Боллинджера"""
+        """Полосы Боллинджера (БЕЗ numpy)"""
         if len(data) < period:
             middle = data[-1] if data else 0
             return {"upper": middle, "middle": middle, "lower": middle}
         
         sma = TechnicalIndicators.sma(data, period)
-        variance = sum([(x - sma) ** 2 for x in data[-period:]]) / period
-        std = variance ** 0.5
+        
+        # Вычисляем стандартное отклонение вручную
+        variance = sum((x - sma) ** 2 for x in data[-period:]) / period
+        std = math.sqrt(variance)  # Используем math.sqrt вместо numpy
         
         return {
             "upper": sma + (std * std_dev),
             "middle": sma,
             "lower": sma - (std * std_dev)
         }
+    
+    @staticmethod
+    def standard_deviation(data: List[float], period: int = 20) -> float:
+        """Стандартное отклонение (БЕЗ numpy)"""
+        if len(data) < period:
+            return 0.0
+        
+        recent_data = data[-period:]
+        mean = sum(recent_data) / len(recent_data)
+        variance = sum((x - mean) ** 2 for x in recent_data) / len(recent_data)
+        return math.sqrt(variance)
 
 
 class BaseStrategy:
-    """Базовая торговая стратегия RSI + MA"""
+    """Базовая торговая стратегия RSI + MA (БЕЗ numpy)"""
     
     def __init__(self, symbol: str, timeframe: str = "5m"):
         self.settings = get_settings()
@@ -151,7 +164,7 @@ class BaseStrategy:
         self.is_active = True
         
         self.logger = logging.getLogger(__name__)
-        self.logger.info(f"🎯 Стратегия инициализирована для {symbol} ({timeframe})")
+        self.logger.info(f"🎯 Стратегия инициализирована для {symbol} ({timeframe}) - БЕЗ numpy")
     
     def update_ticker(self, ticker_data: dict):
         """Обновление ticker данных"""
@@ -245,7 +258,7 @@ class BaseStrategy:
             return None
     
     def _calculate_indicators(self) -> dict:
-        """Вычисление технических индикаторов"""
+        """Вычисление технических индикаторов (БЕЗ numpy)"""
         indicators = {}
         
         try:
@@ -286,12 +299,9 @@ class BaseStrategy:
             # Текущая цена
             indicators["current_price"] = self.close_prices[-1]
             
-            # Волатильность (стандартное отклонение за 20 периодов)
+            # Волатильность (БЕЗ numpy)
             if len(self.close_prices) >= 20:
-                recent_prices = self.close_prices[-20:]
-                mean_price = sum(recent_prices) / len(recent_prices)
-                variance = sum((price - mean_price) ** 2 for price in recent_prices) / len(recent_prices)
-                indicators["volatility"] = (variance ** 0.5) / mean_price * 100
+                indicators["volatility"] = TechnicalIndicators.standard_deviation(self.close_prices, 20)
             else:
                 indicators["volatility"] = 0
             
@@ -409,7 +419,7 @@ class BaseStrategy:
     def get_status(self) -> dict:
         """Получить статус стратегии"""
         return {
-            "strategy_name": "RSI + Moving Average",
+            "strategy_name": "RSI + Moving Average (БЕЗ numpy)",
             "symbol": self.symbol,
             "timeframe": self.timeframe,
             "is_active": self.is_active,
