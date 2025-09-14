@@ -1,6 +1,7 @@
 """
-Главный файл торгового бота для Bybit
-Веб-сервис для деплоя на Render (исправлены импорты)
+Главный файл торгового бота для Bybit с ИИ-анализом
+Веб-сервис для деплоя на Render с интеграцией OpenAI GPT-4
+Обновлено: добавлен ИИ-анализ рынка через MarketAnalyzer
 """
 
 import asyncio
@@ -18,11 +19,12 @@ from fastapi.responses import JSONResponse
 # Добавляем текущую директорию в путь для импортов
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# Импорты компонентов бота (ИСПРАВЛЕНЫ)
+# Импорты компонентов бота
 from config.settings import Settings, get_settings
 from core.websocket_manager import WebSocketManager
 from strategies.base_strategy import BaseStrategy
-from telegram_bot.bot import TelegramBot  # ИСПРАВЛЕНО: telegram_bot вместо telegram
+from telegram_bot.bot import TelegramBot
+from ai_analyzer.market_analyzer import MarketAnalyzer  # НОВЫЙ ИМПОРТ
 
 # Настройка логирования (безопасно для Render)
 logging.basicConfig(
@@ -42,6 +44,7 @@ class BotManager:
         self.websocket_manager: Optional[WebSocketManager] = None
         self.telegram_bot: Optional[TelegramBot] = None
         self.strategy: Optional[BaseStrategy] = None
+        self.market_analyzer: Optional[MarketAnalyzer] = None  # НОВЫЙ КОМПОНЕНТ
         
         self.status = {
             "is_running": False,
@@ -51,7 +54,10 @@ class BotManager:
             "current_pair": "BTCUSDT",
             "strategy_status": "idle",
             "last_price": None,
-            "signals_count": 0
+            "signals_count": 0,
+            "ai_analysis_enabled": False,  # НОВЫЙ СТАТУС
+            "ai_analysis_count": 0,  # НОВЫЙ СЧЕТЧИК
+            "last_ai_analysis": None  # НОВОЕ ПОЛЕ
         }
 
 # Глобальный менеджер бота
@@ -61,7 +67,7 @@ bot_manager = BotManager()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Управление жизненным циклом приложения"""
-    logger.info("🚀 Запуск торгового бота (исправлены импорты)...")
+    logger.info("🚀 Запуск торгового бота с ИИ-анализом...")
     
     # Инициализация компонентов при запуске
     await initialize_bot()
@@ -74,21 +80,21 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Bybit Trading Bot",
-    description="Торговый бот для фьючерсов Bybit с телеграм уведомлениями (исправлены импорты)",
-    version="1.0.0",
+    title="Bybit Trading Bot with AI Analysis",
+    description="Торговый бот для фьючерсов Bybit с ИИ-анализом через OpenAI GPT-4",
+    version="2.0.0",
     lifespan=lifespan
 )
 
 
 async def initialize_bot():
-    """Инициализация всех компонентов бота"""
+    """Инициализация всех компонентов бота включая ИИ-анализатор"""
     try:
-        logger.info("Инициализация компонентов...")
+        logger.info("Инициализация компонентов с ИИ-анализом...")
         
         # Загрузка настроек
         bot_manager.settings = get_settings()
-        logger.info(f"✅ Настройки загружены (исправлены импорты)")
+        logger.info(f"✅ Настройки загружены")
         
         # Инициализация стратегии
         bot_manager.strategy = BaseStrategy(
@@ -108,15 +114,45 @@ async def initialize_bot():
         await bot_manager.websocket_manager.start()
         logger.info("✅ WebSocket менеджер запущен")
         
-        # Инициализация телеграм бота
-        if bot_manager.settings.TELEGRAM_BOT_TOKEN:
+        # НОВОЕ: Инициализация ИИ-анализатора
+        if bot_manager.settings.AI_ANALYSIS_ENABLED:
+            try:
+                bot_manager.market_analyzer = MarketAnalyzer(
+                    websocket_manager=bot_manager.websocket_manager
+                )
+                
+                # Проверяем статус анализатора
+                analyzer_status = bot_manager.market_analyzer.get_status()
+                
+                if analyzer_status.get("openai_available") and analyzer_status.get("api_key_configured"):
+                    logger.info("✅ ИИ-анализатор успешно инициализирован")
+                    logger.info(f"   Модель: {bot_manager.settings.OPENAI_MODEL}")
+                    logger.info(f"   Макс токенов: {bot_manager.settings.OPENAI_MAX_TOKENS}")
+                    bot_manager.status["ai_analysis_enabled"] = True
+                else:
+                    logger.warning("⚠️ ИИ-анализатор инициализирован с ошибками:")
+                    if not analyzer_status.get("openai_available"):
+                        logger.warning("   - OpenAI библиотека недоступна")
+                    if not analyzer_status.get("api_key_configured"):
+                        logger.warning("   - OPENAI_API_KEY не настроен")
+                    bot_manager.market_analyzer = None
+                    
+            except Exception as e:
+                logger.error(f"❌ Ошибка инициализации ИИ-анализатора: {e}")
+                bot_manager.market_analyzer = None
+        else:
+            logger.info("📴 ИИ-анализ отключен в настройках")
+        
+        # Инициализация телеграм бота с ИИ-анализатором
+        if bot_manager.settings.is_telegram_configured:
             bot_manager.telegram_bot = TelegramBot(
                 token=bot_manager.settings.TELEGRAM_BOT_TOKEN,
                 chat_id=bot_manager.settings.TELEGRAM_CHAT_ID,
-                websocket_manager=bot_manager.websocket_manager
+                websocket_manager=bot_manager.websocket_manager,
+                market_analyzer=bot_manager.market_analyzer  # ПЕРЕДАЕМ АНАЛИЗАТОР
             )
             await bot_manager.telegram_bot.start()
-            logger.info("✅ Телеграм бот запущен")
+            logger.info("✅ Телеграм бот запущен с ИИ-анализом")
         else:
             logger.warning("⚠️ Telegram bot token не найден, телеграм уведомления отключены")
         
@@ -129,6 +165,13 @@ async def initialize_bot():
         })
         
         logger.info("✅ Все компоненты успешно инициализированы")
+        
+        # Логирование итогового статуса
+        logger.info("📊 СТАТУС КОМПОНЕНТОВ:")
+        logger.info(f"   WebSocket: {'✅ Подключен' if bot_manager.websocket_manager.is_connected else '❌ Отключен'}")
+        logger.info(f"   Стратегия: {'✅ Активна' if bot_manager.strategy else '❌ Неактивна'}")
+        logger.info(f"   Telegram: {'✅ Активен' if bot_manager.telegram_bot else '❌ Отключен'}")
+        logger.info(f"   ИИ-анализ: {'✅ Активен' if bot_manager.market_analyzer else '❌ Отключен'}")
         
     except Exception as e:
         logger.error(f"❌ Ошибка инициализации: {e}")
@@ -150,6 +193,10 @@ async def cleanup_bot():
         if bot_manager.telegram_bot:
             await bot_manager.telegram_bot.stop()
             logger.info("✅ Телеграм бот остановлен")
+        
+        # ИИ-анализатор не требует специальной очистки
+        if bot_manager.market_analyzer:
+            logger.info("✅ ИИ-анализатор отключен")
         
         logger.info("✅ Все ресурсы очищены")
         
@@ -178,11 +225,12 @@ async def on_trading_signal(signal_data: dict):
 async def root():
     """Главная страница"""
     return {
-        "message": "Bybit Trading Bot API (исправлены импорты)",
+        "message": "Bybit Trading Bot with AI Analysis",
         "status": "running" if bot_manager.status["is_running"] else "stopped",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "timestamp": datetime.now().isoformat(),
-        "pair": bot_manager.status["current_pair"]
+        "pair": bot_manager.status["current_pair"],
+        "ai_enabled": bot_manager.status["ai_analysis_enabled"]
     }
 
 
@@ -202,7 +250,9 @@ async def health_check():
         "websocket": "connected" if websocket_status else "disconnected",
         "strategy": bot_manager.status["strategy_status"],
         "current_pair": bot_manager.status["current_pair"],
-        "signals_count": bot_manager.status["signals_count"]
+        "signals_count": bot_manager.status["signals_count"],
+        "ai_analysis_enabled": bot_manager.status["ai_analysis_enabled"],
+        "ai_analysis_count": bot_manager.status["ai_analysis_count"]
     }
 
 
@@ -211,6 +261,7 @@ async def get_bot_status():
     """Получить подробный статус бота"""
     websocket_status = False
     telegram_status = False
+    ai_status = False
     
     if bot_manager.websocket_manager:
         websocket_status = bot_manager.websocket_manager.is_connected
@@ -218,15 +269,22 @@ async def get_bot_status():
     if bot_manager.telegram_bot:
         telegram_status = bot_manager.telegram_bot.is_running
     
+    if bot_manager.market_analyzer:
+        ai_analyzer_status = bot_manager.market_analyzer.get_status()
+        ai_status = ai_analyzer_status.get("client_initialized", False)
+    
     return {
         "bot_status": bot_manager.status,
         "components": {
             "websocket_manager": websocket_status,
             "telegram_bot": telegram_status,
-            "strategy_active": bot_manager.strategy is not None
+            "strategy_active": bot_manager.strategy is not None,
+            "ai_analyzer": ai_status,
+            "openai_configured": bot_manager.settings.is_openai_configured if bot_manager.settings else False
         },
         "last_price": bot_manager.status.get("last_price"),
-        "strategy_data": bot_manager.strategy.get_current_data() if bot_manager.strategy else None
+        "strategy_data": bot_manager.strategy.get_current_data() if bot_manager.strategy else None,
+        "ai_analyzer_status": bot_manager.market_analyzer.get_status() if bot_manager.market_analyzer else None
     }
 
 
@@ -319,6 +377,118 @@ async def get_strategy_status():
         raise HTTPException(status_code=500, detail=f"Ошибка: {str(e)}")
 
 
+# НОВЫЕ ENDPOINTS ДЛЯ ИИ-АНАЛИЗА
+
+@app.post("/ai/analyze")
+async def ai_market_analysis():
+    """Запуск ИИ-анализа рынка через API"""
+    try:
+        if not bot_manager.market_analyzer:
+            raise HTTPException(
+                status_code=503, 
+                detail="ИИ-анализатор не инициализирован. Проверьте OPENAI_API_KEY."
+            )
+        
+        if not bot_manager.settings.is_openai_configured:
+            raise HTTPException(
+                status_code=503,
+                detail="OpenAI не настроен. Добавьте OPENAI_API_KEY в переменные окружения."
+            )
+        
+        logger.info("🤖 Запуск ИИ-анализа через API...")
+        
+        # Выполняем анализ
+        market_data, ai_analysis = await bot_manager.market_analyzer.analyze_market(
+            bot_manager.settings.TRADING_PAIR
+        )
+        
+        # Обновляем статистику
+        bot_manager.status["ai_analysis_count"] += 1
+        bot_manager.status["last_ai_analysis"] = datetime.now()
+        
+        return {
+            "success": True,
+            "timestamp": datetime.now().isoformat(),
+            "symbol": bot_manager.settings.TRADING_PAIR,
+            "market_data": market_data,
+            "ai_analysis": ai_analysis,
+            "analysis_count": bot_manager.status["ai_analysis_count"]
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка ИИ-анализа через API: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка ИИ-анализа: {str(e)}")
+
+
+@app.get("/ai/status")
+async def get_ai_status():
+    """Получить статус ИИ-анализатора"""
+    try:
+        if not bot_manager.market_analyzer:
+            return {
+                "ai_available": False,
+                "reason": "ИИ-анализатор не инициализирован",
+                "openai_configured": bot_manager.settings.is_openai_configured if bot_manager.settings else False,
+                "analysis_enabled": bot_manager.settings.AI_ANALYSIS_ENABLED if bot_manager.settings else False
+            }
+        
+        analyzer_status = bot_manager.market_analyzer.get_status()
+        
+        return {
+            "ai_available": True,
+            "analyzer_status": analyzer_status,
+            "settings": {
+                "model": bot_manager.settings.OPENAI_MODEL,
+                "max_tokens": bot_manager.settings.OPENAI_MAX_TOKENS,
+                "temperature": bot_manager.settings.OPENAI_TEMPERATURE,
+                "analysis_enabled": bot_manager.settings.AI_ANALYSIS_ENABLED
+            },
+            "statistics": {
+                "total_analyses": bot_manager.status["ai_analysis_count"],
+                "last_analysis": bot_manager.status["last_ai_analysis"]
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Ошибка получения статуса ИИ: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка: {str(e)}")
+
+
+@app.get("/ai/config")
+async def get_ai_config():
+    """Получить конфигурацию ИИ-анализатора"""
+    try:
+        if not bot_manager.settings:
+            raise HTTPException(status_code=503, detail="Настройки не загружены")
+        
+        return {
+            "openai_configured": bot_manager.settings.is_openai_configured,
+            "analysis_enabled": bot_manager.settings.AI_ANALYSIS_ENABLED,
+            "model": bot_manager.settings.OPENAI_MODEL,
+            "max_tokens": bot_manager.settings.OPENAI_MAX_TOKENS,
+            "temperature": bot_manager.settings.OPENAI_TEMPERATURE,
+            "timeout": bot_manager.settings.OPENAI_TIMEOUT,
+            "data_settings": {
+                "klines_count": bot_manager.settings.AI_KLINES_COUNT,
+                "orderbook_levels": bot_manager.settings.AI_ORDERBOOK_LEVELS,
+                "trades_count": bot_manager.settings.AI_TRADES_COUNT
+            },
+            "performance": {
+                "max_concurrent_requests": bot_manager.settings.MAX_CONCURRENT_AI_REQUESTS,
+                "retry_attempts": bot_manager.settings.AI_RETRY_ATTEMPTS,
+                "cooldown_minutes": bot_manager.settings.AI_ANALYSIS_COOLDOWN_MINUTES
+            }
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка получения конфигурации ИИ: {e}")
+        raise HTTPException(status_code=500, detail=f"Ошибка: {str(e)}")
+
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
     """Глобальный обработчик исключений"""
@@ -334,7 +504,8 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     host = "0.0.0.0"
     
-    logger.info(f"🚀 Запуск сервера на {host}:{port} (исправлены импорты)")
+    logger.info(f"🚀 Запуск сервера с ИИ-анализом на {host}:{port}")
+    logger.info(f"📊 OpenAI настроен: {'Да' if os.getenv('OPENAI_API_KEY') else 'Нет'}")
     
     uvicorn.run(
         "main:app",
