@@ -1,6 +1,6 @@
 """
 Главный файл торгового бота для Bybit
-Веб-сервис для деплоя на Render (БЕЗ Pydantic)
+Веб-сервис для деплоя на Render (исправлены импорты)
 """
 
 import asyncio
@@ -18,11 +18,11 @@ from fastapi.responses import JSONResponse
 # Добавляем текущую директорию в путь для импортов
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-# Импорты компонентов бота
+# Импорты компонентов бота (ИСПРАВЛЕНЫ)
 from config.settings import Settings, get_settings
 from core.websocket_manager import WebSocketManager
 from strategies.base_strategy import BaseStrategy
-from telegram.bot import TelegramBot
+from telegram_bot.bot import TelegramBot  # ИСПРАВЛЕНО: telegram_bot вместо telegram
 
 # Настройка логирования (безопасно для Render)
 logging.basicConfig(
@@ -61,7 +61,7 @@ bot_manager = BotManager()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Управление жизненным циклом приложения"""
-    logger.info("🚀 Запуск торгового бота (БЕЗ Pydantic)...")
+    logger.info("🚀 Запуск торгового бота (исправлены импорты)...")
     
     # Инициализация компонентов при запуске
     await initialize_bot()
@@ -75,7 +75,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Bybit Trading Bot",
-    description="Торговый бот для фьючерсов Bybit с телеграм уведомлениями (БЕЗ Pydantic)",
+    description="Торговый бот для фьючерсов Bybit с телеграм уведомлениями (исправлены импорты)",
     version="1.0.0",
     lifespan=lifespan
 )
@@ -88,7 +88,7 @@ async def initialize_bot():
         
         # Загрузка настроек
         bot_manager.settings = get_settings()
-        logger.info(f"✅ Настройки загружены (БЕЗ Pydantic)")
+        logger.info(f"✅ Настройки загружены (исправлены импорты)")
         
         # Инициализация стратегии
         bot_manager.strategy = BaseStrategy(
@@ -178,7 +178,7 @@ async def on_trading_signal(signal_data: dict):
 async def root():
     """Главная страница"""
     return {
-        "message": "Bybit Trading Bot API (БЕЗ Pydantic)",
+        "message": "Bybit Trading Bot API (исправлены импорты)",
         "status": "running" if bot_manager.status["is_running"] else "stopped",
         "version": "1.0.0",
         "timestamp": datetime.now().isoformat(),
@@ -334,7 +334,7 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     host = "0.0.0.0"
     
-    logger.info(f"🚀 Запуск сервера на {host}:{port} (БЕЗ Pydantic)")
+    logger.info(f"🚀 Запуск сервера на {host}:{port} (исправлены импорты)")
     
     uvicorn.run(
         "main:app",
