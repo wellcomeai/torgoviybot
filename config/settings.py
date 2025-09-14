@@ -1,6 +1,7 @@
 """
 Настройки торгового бота
 Конфигурация для всех компонентов (БЕЗ Pydantic)
+Обновлено: добавлены настройки OpenAI для ИИ-анализа
 """
 
 import os
@@ -65,6 +66,19 @@ class Settings:
         # Минимальная уверенность для сигнала (0.0 - 1.0)
         self.MIN_SIGNAL_CONFIDENCE: float = get_env_float("MIN_SIGNAL_CONFIDENCE", 0.7)
         
+        # OpenAI настройки для ИИ-анализа
+        self.OPENAI_API_KEY: Optional[str] = os.getenv("OPENAI_API_KEY")
+        self.OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4")
+        self.OPENAI_MAX_TOKENS: int = get_env_int("OPENAI_MAX_TOKENS", 2000)
+        self.OPENAI_TEMPERATURE: float = get_env_float("OPENAI_TEMPERATURE", 0.3)
+        self.OPENAI_TIMEOUT: int = get_env_int("OPENAI_TIMEOUT", 60)  # Таймаут в секундах
+        
+        # Настройки ИИ-анализа
+        self.AI_ANALYSIS_ENABLED: bool = get_env_bool("AI_ANALYSIS_ENABLED", True)
+        self.AI_KLINES_COUNT: int = get_env_int("AI_KLINES_COUNT", 50)  # Количество свечей для анализа
+        self.AI_ORDERBOOK_LEVELS: int = get_env_int("AI_ORDERBOOK_LEVELS", 10)  # Уровней ордербука
+        self.AI_TRADES_COUNT: int = get_env_int("AI_TRADES_COUNT", 100)  # Количество сделок для анализа
+        
         # Telegram настройки
         self.TELEGRAM_BOT_TOKEN: Optional[str] = os.getenv("TELEGRAM_BOT_TOKEN")
         self.TELEGRAM_CHAT_ID: Optional[str] = os.getenv("TELEGRAM_CHAT_ID")
@@ -84,10 +98,17 @@ class Settings:
         # Настройки уведомлений
         self.NOTIFY_ALL_SIGNALS: bool = get_env_bool("NOTIFY_ALL_SIGNALS", True)
         self.NOTIFY_HIGH_CONFIDENCE_ONLY: bool = get_env_bool("NOTIFY_HIGH_CONFIDENCE_ONLY", False)
+        self.NOTIFY_AI_ANALYSIS: bool = get_env_bool("NOTIFY_AI_ANALYSIS", True)
         
         # Настройки безопасности
         self.MAX_DAILY_SIGNALS: int = get_env_int("MAX_DAILY_SIGNALS", 100)
         self.SIGNAL_COOLDOWN_MINUTES: int = get_env_int("SIGNAL_COOLDOWN_MINUTES", 5)
+        self.AI_ANALYSIS_COOLDOWN_MINUTES: int = get_env_int("AI_ANALYSIS_COOLDOWN_MINUTES", 0)  # Без ограничений по умолчанию
+        
+        # Настройки производительности
+        self.MAX_CONCURRENT_AI_REQUESTS: int = get_env_int("MAX_CONCURRENT_AI_REQUESTS", 3)
+        self.AI_RETRY_ATTEMPTS: int = get_env_int("AI_RETRY_ATTEMPTS", 2)
+        self.AI_RETRY_DELAY: int = get_env_int("AI_RETRY_DELAY", 5)  # Секунды между попытками
     
     @property
     def websocket_url(self) -> str:
@@ -100,6 +121,27 @@ class Settings:
     def is_production(self) -> bool:
         """Проверяет, запущен ли бот в продакшене"""
         return not self.BYBIT_WS_TESTNET
+    
+    @property
+    def is_openai_configured(self) -> bool:
+        """Проверяет, настроен ли OpenAI"""
+        return bool(self.OPENAI_API_KEY and len(self.OPENAI_API_KEY.strip()) > 10)
+    
+    @property
+    def is_telegram_configured(self) -> bool:
+        """Проверяет, настроен ли Telegram"""
+        return bool(self.TELEGRAM_BOT_TOKEN and self.TELEGRAM_CHAT_ID)
+    
+    @property
+    def openai_config(self) -> dict:
+        """Возвращает конфигурацию OpenAI"""
+        return {
+            "api_key": self.OPENAI_API_KEY,
+            "model": self.OPENAI_MODEL,
+            "max_tokens": self.OPENAI_MAX_TOKENS,
+            "temperature": self.OPENAI_TEMPERATURE,
+            "timeout": self.OPENAI_TIMEOUT
+        }
     
     def get_kline_subscription(self) -> str:
         """Возвращает строку подписки на kline данные"""
@@ -141,7 +183,10 @@ def get_settings() -> Settings:
         logger.info(f"   Таймфрейм: {_settings.STRATEGY_TIMEFRAME}")
         logger.info(f"   Режим: {'TESTNET' if _settings.BYBIT_WS_TESTNET else 'MAINNET'}")
         logger.info(f"   WebSocket URL: {_settings.websocket_url}")
-        logger.info(f"   Telegram: {'Включен' if _settings.TELEGRAM_BOT_TOKEN else 'Отключен'}")
+        logger.info(f"   Telegram: {'Включен' if _settings.is_telegram_configured else 'Отключен'}")
+        logger.info(f"   OpenAI: {'Включен' if _settings.is_openai_configured else 'Отключен'}")
+        logger.info(f"   OpenAI модель: {_settings.OPENAI_MODEL}")
+        logger.info(f"   ИИ-анализ: {'Включен' if _settings.AI_ANALYSIS_ENABLED else 'Отключен'}")
         logger.info(f"   RSI период: {_settings.RSI_PERIOD}")
         logger.info(f"   MA периоды: {_settings.MA_SHORT_PERIOD}/{_settings.MA_LONG_PERIOD}")
         
@@ -182,6 +227,45 @@ def validate_settings(settings: Settings) -> bool:
     if not (0.0 <= settings.MIN_SIGNAL_CONFIDENCE <= 1.0):
         errors.append("Минимальная уверенность должна быть между 0.0 и 1.0")
     
+    # Проверка OpenAI настроек
+    if settings.AI_ANALYSIS_ENABLED and not settings.is_openai_configured:
+        errors.append("ИИ-анализ включен, но OPENAI_API_KEY не настроен")
+    
+    if settings.OPENAI_API_KEY and len(settings.OPENAI_API_KEY.strip()) < 10:
+        errors.append("OPENAI_API_KEY слишком короткий (должен быть > 10 символов)")
+    
+    # Проверка модели OpenAI
+    valid_models = ["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo", "gpt-4o", "gpt-4o-mini"]
+    if settings.OPENAI_MODEL not in valid_models:
+        errors.append(f"Неверная модель OpenAI. Доступные: {valid_models}")
+    
+    # Проверка параметров OpenAI
+    if not (100 <= settings.OPENAI_MAX_TOKENS <= 4000):
+        errors.append("OPENAI_MAX_TOKENS должен быть между 100 и 4000")
+    
+    if not (0.0 <= settings.OPENAI_TEMPERATURE <= 2.0):
+        errors.append("OPENAI_TEMPERATURE должен быть между 0.0 и 2.0")
+    
+    if not (10 <= settings.OPENAI_TIMEOUT <= 300):
+        errors.append("OPENAI_TIMEOUT должен быть между 10 и 300 секунд")
+    
+    # Проверка параметров ИИ-анализа
+    if not (10 <= settings.AI_KLINES_COUNT <= 200):
+        errors.append("AI_KLINES_COUNT должен быть между 10 и 200")
+    
+    if not (5 <= settings.AI_ORDERBOOK_LEVELS <= 50):
+        errors.append("AI_ORDERBOOK_LEVELS должен быть между 5 и 50")
+    
+    if not (50 <= settings.AI_TRADES_COUNT <= 1000):
+        errors.append("AI_TRADES_COUNT должен быть между 50 и 1000")
+    
+    # Проверка производительности
+    if not (1 <= settings.MAX_CONCURRENT_AI_REQUESTS <= 10):
+        errors.append("MAX_CONCURRENT_AI_REQUESTS должен быть между 1 и 10")
+    
+    if not (0 <= settings.AI_RETRY_ATTEMPTS <= 5):
+        errors.append("AI_RETRY_ATTEMPTS должен быть между 0 и 5")
+    
     # Проверка Telegram настроек
     if settings.TELEGRAM_BOT_TOKEN and not settings.TELEGRAM_CHAT_ID:
         errors.append("Если указан Telegram token, нужно указать chat_id")
@@ -215,6 +299,25 @@ MA_SHORT_PERIOD=9
 MA_LONG_PERIOD=21
 MIN_SIGNAL_CONFIDENCE=0.7
 
+# OpenAI настройки для ИИ-анализа
+OPENAI_API_KEY=sk-your_openai_api_key_here
+OPENAI_MODEL=gpt-4
+OPENAI_MAX_TOKENS=2000
+OPENAI_TEMPERATURE=0.3
+OPENAI_TIMEOUT=60
+
+# ИИ-анализ настройки
+AI_ANALYSIS_ENABLED=true
+AI_KLINES_COUNT=50
+AI_ORDERBOOK_LEVELS=10
+AI_TRADES_COUNT=100
+AI_ANALYSIS_COOLDOWN_MINUTES=0
+
+# Настройки производительности OpenAI
+MAX_CONCURRENT_AI_REQUESTS=3
+AI_RETRY_ATTEMPTS=2
+AI_RETRY_DELAY=5
+
 # Telegram настройки
 TELEGRAM_BOT_TOKEN=your_bot_token_here
 TELEGRAM_CHAT_ID=your_chat_id_here
@@ -225,4 +328,39 @@ WS_PING_INTERVAL=20
 KLINE_LIMIT=100
 MAX_DAILY_SIGNALS=100
 SIGNAL_COOLDOWN_MINUTES=5
+NOTIFY_AI_ANALYSIS=true
 """
+
+
+def get_settings_summary() -> dict:
+    """Получить сводку текущих настроек"""
+    settings = get_settings()
+    
+    return {
+        "trading": {
+            "pair": settings.TRADING_PAIR,
+            "timeframe": settings.STRATEGY_TIMEFRAME,
+            "mode": "TESTNET" if settings.BYBIT_WS_TESTNET else "MAINNET"
+        },
+        "strategy": {
+            "rsi_period": settings.RSI_PERIOD,
+            "ma_periods": f"{settings.MA_SHORT_PERIOD}/{settings.MA_LONG_PERIOD}",
+            "min_confidence": settings.MIN_SIGNAL_CONFIDENCE
+        },
+        "ai_analysis": {
+            "enabled": settings.AI_ANALYSIS_ENABLED,
+            "openai_configured": settings.is_openai_configured,
+            "model": settings.OPENAI_MODEL,
+            "max_tokens": settings.OPENAI_MAX_TOKENS,
+            "temperature": settings.OPENAI_TEMPERATURE
+        },
+        "integrations": {
+            "telegram": settings.is_telegram_configured,
+            "openai": settings.is_openai_configured
+        },
+        "performance": {
+            "klines_limit": settings.KLINE_LIMIT,
+            "ai_klines": settings.AI_KLINES_COUNT,
+            "concurrent_ai": settings.MAX_CONCURRENT_AI_REQUESTS
+        }
+    }
