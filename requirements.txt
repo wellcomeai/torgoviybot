@@ -1,45 +1,45 @@
-# Основные зависимости
+# Build dependencies (ОБЯЗАТЕЛЬНО для Render)
+setuptools>=68.0.0
+wheel>=0.41.0
+pip>=23.0.0
+
+# Core web framework
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
-pydantic==2.5.0
-pydantic-settings==2.1.0
 
-# WebSocket клиент
+# Configuration and validation
+pydantic==2.5.2
+pydantic-settings==2.1.0
+python-dotenv==1.0.0
+
+# WebSocket client
 websockets==12.0
 
-# Telegram бот
+# Telegram bot
 python-telegram-bot==20.7
 
-# Математика и анализ данных
-numpy==1.25.2
+# Data processing and math
+numpy==1.24.4
 
-# Асинхронные задачи
-asyncio-mqtt==0.13.0
-
-# HTTP клиент для API запросов
+# HTTP clients
 httpx==0.25.2
 aiohttp==3.9.1
 
-# Работа с датами
+# Date and time utilities
 python-dateutil==2.8.2
-
-# Логирование
-loguru==0.7.2
-
-# Переменные окружения
-python-dotenv==1.0.0
-
-# JSON работа
-orjson==3.9.10
-
-# Криптография (для безопасности)
-cryptography==41.0.7
-
-# Мониторинг и метрики
-psutil==5.9.6
-
-# Timezone support
 pytz==2023.3
 
-# Утилиты
+# JSON processing
+orjson==3.9.10
+
+# Logging (упрощенный вариант)
+# loguru==0.7.2  # Может вызывать проблемы на некоторых системах
+
+# Security
+cryptography==41.0.8
+
+# System monitoring
+psutil==5.9.6
+
+# Type hints
 typing-extensions==4.8.0
