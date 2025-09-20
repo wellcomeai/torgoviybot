@@ -1,7 +1,7 @@
 """
 WebSocket менеджер для подключения к Bybit
 Обработка потоков данных и управление соединением
-Обновлено: детальное логирование для диагностики проблем с данными
+ИСПРАВЛЕНО: диагностика проблем с ticker данными и улучшенный парсинг
 """
 
 import asyncio
@@ -277,7 +277,7 @@ class WebSocketManager:
             self.logger.error(f"Ошибка обработки сообщения: {e}")
     
     async def _handle_ticker_data(self, data: dict):
-        """Обработка ticker данных"""
+        """ИСПРАВЛЕНО: Обработка ticker данных с полной диагностикой"""
         try:
             self.logger.debug("Обработка ticker данных...")
             ticker_info = data.get("data", {})
@@ -286,32 +286,65 @@ class WebSocketManager:
                 self.logger.warning("Пустые ticker данные")
                 return
             
+            # ДИАГНОСТИКА: Полное логирование структуры ticker данных
+            self.logger.info(f"🔍 ПОЛНАЯ СТРУКТУРА TICKER: {json.dumps(ticker_info, indent=2)}")
+            
             symbol = ticker_info.get("symbol")
-            last_price = ticker_info.get("lastPrice")
+            
+            # ИСПРАВЛЕНО: Попробуем разные варианты поля цены
+            last_price = (
+                ticker_info.get("lastPrice") or 
+                ticker_info.get("last_price") or 
+                ticker_info.get("price") or 
+                ticker_info.get("markPrice") or
+                ticker_info.get("indexPrice") or
+                0
+            )
             
             self.logger.info(f"Ticker получен: {symbol} = ${last_price}")
+            self.logger.info(f"🔍 НАЙДЕННЫЕ ПОЛЯ ЦЕНЫ:")
+            self.logger.info(f"   lastPrice: {ticker_info.get('lastPrice')}")
+            self.logger.info(f"   last_price: {ticker_info.get('last_price')}")
+            self.logger.info(f"   price: {ticker_info.get('price')}")
+            self.logger.info(f"   markPrice: {ticker_info.get('markPrice')}")
+            self.logger.info(f"   indexPrice: {ticker_info.get('indexPrice')}")
             
+            # ИСПРАВЛЕНО: Улучшенная обработка всех полей
             self.ticker_data = {
                 "symbol": symbol,
-                "price": float(last_price) if last_price else 0,
-                "change_24h": float(ticker_info.get("price24hPcnt", 0)) * 100,
-                "volume_24h": float(ticker_info.get("volume24h", 0)),
-                "high_24h": float(ticker_info.get("highPrice24h", 0)),
-                "low_24h": float(ticker_info.get("lowPrice24h", 0)),
-                "bid": float(ticker_info.get("bid1Price", 0)),
-                "ask": float(ticker_info.get("ask1Price", 0)),
-                "timestamp": datetime.now().isoformat()
+                "price": float(last_price) if last_price and str(last_price) != "0" else 0,
+                "change_24h": self._safe_float_convert(ticker_info.get("price24hPcnt", 0)) * 100,
+                "volume_24h": self._safe_float_convert(ticker_info.get("volume24h", 0)),
+                "high_24h": self._safe_float_convert(ticker_info.get("highPrice24h", 0)),
+                "low_24h": self._safe_float_convert(ticker_info.get("lowPrice24h", 0)),
+                "bid": self._safe_float_convert(ticker_info.get("bid1Price", ticker_info.get("bidPrice", 0))),
+                "ask": self._safe_float_convert(ticker_info.get("ask1Price", ticker_info.get("askPrice", 0))),
+                "timestamp": datetime.now().isoformat(),
+                # Добавляем дополнительные поля для диагностики
+                "raw_data": ticker_info,
+                "all_available_fields": list(ticker_info.keys())
             }
             
-            self.logger.info(f"Ticker данные сохранены: цена ${self.ticker_data['price']}")
+            self.logger.info(f"✅ Ticker данные сохранены: цена ${self.ticker_data['price']}")
+            self.logger.info(f"   Изменение 24ч: {self.ticker_data['change_24h']:.2f}%")
+            self.logger.info(f"   Объем 24ч: {self.ticker_data['volume_24h']:,.0f}")
             
             # Обновляем стратегию
             if self.strategy:
                 self.strategy.update_ticker(self.ticker_data)
             
         except Exception as e:
-            self.logger.error(f"Ошибка обработки ticker: {e}")
+            self.logger.error(f"❌ Ошибка обработки ticker: {e}")
             self.logger.error(f"Ticker данные: {data}")
+    
+    def _safe_float_convert(self, value, default=0.0):
+        """Безопасное преобразование в float"""
+        try:
+            if value is None or value == "" or value == "null":
+                return default
+            return float(value)
+        except (ValueError, TypeError):
+            return default
     
     async def _handle_kline_data(self, data: dict):
         """Обработка kline (свечи) данных"""
@@ -740,6 +773,7 @@ class WebSocketManager:
             
             comprehensive_data = {
                 "basic_market": self._get_basic_market_summary(),
+                "technical_indicators": self._get_technical_indicators_data(),
                 "extended_klines": self._get_extended_klines_summary(),
                 "orderbook_analysis": self._get_orderbook_analysis(),
                 "trading_activity": self._get_trading_activity_analysis(),
@@ -767,6 +801,16 @@ class WebSocketManager:
             
         except Exception as e:
             self.logger.error(f"Ошибка сбора полных рыночных данных: {e}")
+            return {}
+    
+    def _get_technical_indicators_data(self) -> dict:
+        """Получить данные технических индикаторов из стратегии"""
+        try:
+            if self.strategy and hasattr(self.strategy, 'current_indicators'):
+                return self.strategy.current_indicators
+            return {}
+        except Exception as e:
+            self.logger.error(f"Ошибка получения технических индикаторов: {e}")
             return {}
     
     def _get_basic_market_summary(self) -> dict:
@@ -1006,7 +1050,7 @@ class WebSocketManager:
             self.logger.error(f"Ошибка анализа микроструктуры: {e}")
             return {}
     
-    # Реальные методы для анализа (заменяем заглушки)
+    # Реальные методы для анализа (сокращенные версии основных методов)
     
     def _calculate_volatility(self, prices: List[float]) -> float:
         """Расчет волатильности"""
