@@ -114,8 +114,8 @@ class MarketAnalyzer:
             
             self.logger.info("WebSocket подключен, собираем comprehensive данные...")
             
-            # ИСПОЛЬЗУЕМ НОВЫЙ МЕТОД для полного сбора данных
-            comprehensive_data = self.websocket_manager.get_comprehensive_market_data(symbol)
+            # ИСПРАВЛЕНО: Добавлен await
+            comprehensive_data = await self.websocket_manager.get_comprehensive_market_data(symbol)
             
             if not comprehensive_data:
                 self.logger.warning("get_comprehensive_market_data вернул пустые данные, пробуем fallback...")
