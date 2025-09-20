@@ -1,7 +1,7 @@
 """
 Настройки торгового бота
 Конфигурация для всех компонентов (БЕЗ Pydantic)
-Обновлено: добавлены настройки OpenAI для ИИ-анализа
+Обновлено: добавлены настройки OpenAI для ИИ-анализа и Bybit REST API
 """
 
 import os
@@ -54,6 +54,10 @@ class Settings:
             "wss://stream-testnet.bybit.com/v5/public/linear"
         )
         self.BYBIT_WS_MAINNET_URL: str = "wss://stream.bybit.com/v5/public/linear"
+        
+        # Bybit REST API настройки
+        self.BYBIT_REST_TESTNET_URL: str = "https://api-testnet.bybit.com"
+        self.BYBIT_REST_MAINNET_URL: str = "https://api.bybit.com"
         
         # Настройки стратегии RSI + MA
         self.RSI_PERIOD: int = get_env_int("RSI_PERIOD", 14)
@@ -117,6 +121,11 @@ class Settings:
             return "wss://stream-testnet.bybit.com/v5/public/linear"
         else:
             return "wss://stream.bybit.com/v5/public/linear"
+    
+    @property
+    def bybit_rest_url(self) -> str:
+        """Возвращает URL REST API в зависимости от режима"""
+        return self.BYBIT_REST_TESTNET_URL if self.BYBIT_WS_TESTNET else self.BYBIT_REST_MAINNET_URL
     
     @property
     def is_production(self) -> bool:
@@ -195,6 +204,7 @@ def get_settings() -> Settings:
         logger.info(f"   Таймфрейм: {_settings.STRATEGY_TIMEFRAME}")
         logger.info(f"   Режим: {'TESTNET' if _settings.BYBIT_WS_TESTNET else 'MAINNET'}")
         logger.info(f"   WebSocket URL: {_settings.websocket_url}")
+        logger.info(f"   REST API URL: {_settings.bybit_rest_url}")
         logger.info(f"   Telegram: {'Включен' if _settings.is_telegram_configured else 'Отключен'}")
         logger.info(f"   OpenAI: {'Включен' if _settings.is_openai_configured else 'Отключен'}")
         logger.info(f"   OpenAI модель: {_settings.OPENAI_MODEL}")
@@ -374,5 +384,9 @@ def get_settings_summary() -> dict:
             "klines_limit": settings.KLINE_LIMIT,
             "ai_klines": settings.AI_KLINES_COUNT,
             "concurrent_ai": settings.MAX_CONCURRENT_AI_REQUESTS
+        },
+        "api_endpoints": {
+            "websocket_url": settings.websocket_url,
+            "rest_api_url": settings.bybit_rest_url
         }
     }
