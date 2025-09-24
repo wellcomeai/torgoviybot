@@ -1,17 +1,17 @@
-# АБСОЛЮТНО МИНИМАЛЬНЫЙ набор - только 100% рабочие пакеты
-
-# Core web framework - проверено для Python 3.13
+# CORE - основные компоненты
 fastapi==0.104.1
 uvicorn==0.24.0
 
-# WebSocket client - pure Python
-websockets==12.0
+# PYBIT - официальная библиотека Bybit (НОВОЕ!)
+pybit==5.11.0
 
-# HTTP client - минимальный
+# HTTP клиент (оставляем для OpenAI и других запросов)
 httpx==0.27.0
 
-# Basic utilities - только самое необходимое
+# Утилиты
 python-dotenv==1.0.1
 openai>=1.0.0
-
 python-telegram-bot==21.0.1
+
+# Убираем websockets - pybit использует свой
+# websockets==12.0  # УДАЛЯЕМ - pybit включает свой
