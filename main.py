@@ -3,6 +3,7 @@
 Веб-сервис для деплоя на Render с интеграцией OpenAI GPT-4
 Обновлено: добавлен ИИ-анализ рынка через MarketAnalyzer
 Обновлено: интеграция с официальной библиотекой pybit v5.11.0
+ИСПРАВЛЕНО: использование PybitWebSocketManager вместо старого WebSocketManager
 """
 
 import asyncio
@@ -22,10 +23,13 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # Импорты компонентов бота
 from config.settings import Settings, get_settings
-from core.websocket_manager import WebSocketManager
+
+# ИСПРАВЛЕНО: импортируем новый PybitWebSocketManager
+from core.pybit_websocket_manager import PybitWebSocketManager as WebSocketManager
+
 from strategies.base_strategy import BaseStrategy
 from telegram_bot.bot import TelegramBot
-from ai_analyzer.market_analyzer import MarketAnalyzer  # НОВЫЙ ИМПОРТ
+from ai_analyzer.market_analyzer import MarketAnalyzer
 
 # Настройка логирования (безопасно для Render)
 logging.basicConfig(
@@ -68,7 +72,7 @@ bot_manager = BotManager()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Управление жизненным циклом приложения"""
-    logger.info("🚀 Запуск торгового бота с ИИ-анализом...")
+    logger.info("🚀 Запуск торгового бота с ИИ-анализом (pybit)...")
     
     # Инициализация компонентов при запуске
     await initialize_bot()
@@ -81,9 +85,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Bybit Trading Bot with AI Analysis",
-    description="Торговый бот для фьючерсов Bybit с ИИ-анализом через OpenAI GPT-4",
-    version="2.1.0",
+    title="Bybit Trading Bot with AI Analysis (pybit)",
+    description="Торговый бот для фьючерсов Bybit с ИИ-анализом через OpenAI GPT-4 (pybit)",
+    version="2.2.0",
     lifespan=lifespan
 )
 
@@ -91,14 +95,14 @@ app = FastAPI(
 async def initialize_bot():
     """Инициализация всех компонентов бота включая ИИ-анализатор"""
     try:
-        logger.info("Инициализация компонентов с pybit...")
+        logger.info("Инициализация компонентов с pybit v5.11.0...")
         
         # Загрузка настроек
         bot_manager.settings = get_settings()
         logger.info(f"✅ Настройки загружены")
         
-        # НОВОЕ: Логирование использования pybit
-        logger.info("✅ Используется официальная библиотека pybit v5.11.0")
+        # ОБНОВЛЕНО: Логирование использования pybit
+        logger.info("✅ Используется PybitWebSocketManager (официальная библиотека pybit v5.11.0)")
         logger.info(f"   WebSocket: {bot_manager.settings.websocket_url}")
         logger.info(f"   REST API: {bot_manager.settings.bybit_rest_url}")
         
@@ -109,7 +113,7 @@ async def initialize_bot():
         )
         logger.info(f"✅ Стратегия инициализирована для {bot_manager.settings.TRADING_PAIR}")
         
-        # Инициализация WebSocket менеджера
+        # ИСПРАВЛЕНО: Инициализация нового PybitWebSocket менеджера
         bot_manager.websocket_manager = WebSocketManager(
             symbol=bot_manager.settings.TRADING_PAIR,
             strategy=bot_manager.strategy,
@@ -118,7 +122,7 @@ async def initialize_bot():
         
         # Запуск WebSocket соединения
         await bot_manager.websocket_manager.start()
-        logger.info("✅ WebSocket менеджер запущен")
+        logger.info("✅ PybitWebSocket менеджер запущен")
         
         # НОВОЕ: Инициализация ИИ-анализатора
         if bot_manager.settings.AI_ANALYSIS_ENABLED:
@@ -170,11 +174,11 @@ async def initialize_bot():
             "strategy_status": "active"
         })
         
-        logger.info("✅ Все компоненты успешно инициализированы")
+        logger.info("✅ Все компоненты успешно инициализированы с pybit")
         
         # Логирование итогового статуса
         logger.info("📊 СТАТУС КОМПОНЕНТОВ:")
-        logger.info(f"   WebSocket: {'✅ Подключен' if bot_manager.websocket_manager.is_connected else '❌ Отключен'}")
+        logger.info(f"   WebSocket (pybit): {'✅ Подключен' if bot_manager.websocket_manager.is_connected else '❌ Отключен'}")
         logger.info(f"   Стратегия: {'✅ Активна' if bot_manager.strategy else '❌ Неактивна'}")
         logger.info(f"   Telegram: {'✅ Активен' if bot_manager.telegram_bot else '❌ Отключен'}")
         logger.info(f"   ИИ-анализ: {'✅ Активен' if bot_manager.market_analyzer else '❌ Отключен'}")
@@ -193,7 +197,7 @@ async def cleanup_bot():
         # Остановка WebSocket соединения
         if bot_manager.websocket_manager:
             await bot_manager.websocket_manager.stop()
-            logger.info("✅ WebSocket соединение закрыто")
+            logger.info("✅ PybitWebSocket соединение закрыто")
         
         # Остановка телеграм бота
         if bot_manager.telegram_bot:
@@ -204,7 +208,7 @@ async def cleanup_bot():
         if bot_manager.market_analyzer:
             logger.info("✅ ИИ-анализатор отключен")
         
-        logger.info("✅ Все ресурсы очищены")
+        logger.info("✅ Все ресурсы очищены (pybit)")
         
     except Exception as e:
         logger.error(f"❌ Ошибка при очистке: {e}")
@@ -231,13 +235,13 @@ async def on_trading_signal(signal_data: dict):
 async def root():
     """Главная страница"""
     return {
-        "message": "Bybit Trading Bot with AI Analysis",
+        "message": "Bybit Trading Bot with AI Analysis (pybit)",
         "status": "running" if bot_manager.status["is_running"] else "stopped",
-        "version": "2.1.0",
+        "version": "2.2.0",
         "timestamp": datetime.now().isoformat(),
         "pair": bot_manager.status["current_pair"],
         "ai_enabled": bot_manager.status["ai_analysis_enabled"],
-        "pybit_version": "5.11.0"
+        "websocket_engine": "pybit v5.11.0"
     }
 
 
@@ -255,12 +259,12 @@ async def health_check():
         "status": "healthy",
         "uptime": str(datetime.now() - bot_manager.status["start_time"]) if bot_manager.status["start_time"] else None,
         "websocket": "connected" if websocket_status else "disconnected",
+        "websocket_engine": "pybit v5.11.0",
         "strategy": bot_manager.status["strategy_status"],
         "current_pair": bot_manager.status["current_pair"],
         "signals_count": bot_manager.status["signals_count"],
         "ai_analysis_enabled": bot_manager.status["ai_analysis_enabled"],
-        "ai_analysis_count": bot_manager.status["ai_analysis_count"],
-        "pybit_version": "5.11.0"
+        "ai_analysis_count": bot_manager.status["ai_analysis_count"]
     }
 
 
@@ -285,6 +289,7 @@ async def get_bot_status():
         "bot_status": bot_manager.status,
         "components": {
             "websocket_manager": websocket_status,
+            "websocket_engine": "pybit v5.11.0",
             "telegram_bot": telegram_status,
             "strategy_active": bot_manager.strategy is not None,
             "ai_analyzer": ai_status,
@@ -309,7 +314,7 @@ async def start_bot():
             return {"message": "Бот уже запущен", "status": "running"}
         
         await initialize_bot()
-        return {"message": "Бот успешно запущен", "status": "running"}
+        return {"message": "Бот успешно запущен (pybit)", "status": "running"}
         
     except Exception as e:
         logger.error(f"Ошибка запуска бота: {e}")
@@ -336,7 +341,7 @@ async def get_market_info(symbol: str = "BTCUSDT"):
     """Получить информацию о рынке"""
     try:
         if not bot_manager.websocket_manager:
-            raise HTTPException(status_code=503, detail="WebSocket не подключен")
+            raise HTTPException(status_code=503, detail="PybitWebSocket не подключен")
         
         market_data = bot_manager.websocket_manager.get_market_data(symbol)
         
@@ -425,7 +430,8 @@ async def ai_market_analysis():
             "symbol": bot_manager.settings.TRADING_PAIR,
             "market_data": market_data,
             "ai_analysis": ai_analysis,
-            "analysis_count": bot_manager.status["ai_analysis_count"]
+            "analysis_count": bot_manager.status["ai_analysis_count"],
+            "websocket_engine": "pybit v5.11.0"
         }
         
     except HTTPException:
@@ -461,7 +467,8 @@ async def get_ai_status():
             "statistics": {
                 "total_analyses": bot_manager.status["ai_analysis_count"],
                 "last_analysis": bot_manager.status["last_ai_analysis"]
-            }
+            },
+            "websocket_engine": "pybit v5.11.0"
         }
         
     except Exception as e:
@@ -492,7 +499,8 @@ async def get_ai_config():
                 "max_concurrent_requests": bot_manager.settings.MAX_CONCURRENT_AI_REQUESTS,
                 "retry_attempts": bot_manager.settings.AI_RETRY_ATTEMPTS,
                 "cooldown_minutes": bot_manager.settings.AI_ANALYSIS_COOLDOWN_MINUTES
-            }
+            },
+            "websocket_engine": "pybit v5.11.0"
         }
         
     except HTTPException:
@@ -517,9 +525,9 @@ if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     host = "0.0.0.0"
     
-    logger.info(f"🚀 Запуск сервера с ИИ-анализом на {host}:{port}")
+    logger.info(f"🚀 Запуск сервера с ИИ-анализом на {host}:{port} (pybit v5.11.0)")
     logger.info(f"📊 OpenAI настроен: {'Да' if os.getenv('OPENAI_API_KEY') else 'Нет'}")
-    logger.info(f"📦 Используется pybit v5.11.0 для Bybit API")
+    logger.info(f"📦 Используется PybitWebSocketManager для Bybit API")
     
     uvicorn.run(
         "main:app",
