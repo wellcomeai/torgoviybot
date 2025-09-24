@@ -25,7 +25,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from config.settings import Settings, get_settings
 
 # ИСПРАВЛЕНО: импортируем новый PybitWebSocketManager
-from core.pybit_websocket_manager import PybitWebSocketManager as WebSocketManager
+from core import WebSocketManager
 
 from strategies.base_strategy import BaseStrategy
 from telegram_bot.bot import TelegramBot
