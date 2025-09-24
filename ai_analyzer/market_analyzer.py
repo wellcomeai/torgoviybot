@@ -1,6 +1,6 @@
 """
 ИИ анализатор рынка через OpenAI GPT-4
-Исправлено: правильный сбор данных через get_comprehensive_market_data
+Исправлено: правильный сбор данных через get_comprehensive_market_data с pybit
 """
 
 import asyncio
@@ -16,11 +16,14 @@ try:
 except ImportError:
     OPENAI_AVAILABLE = False
 
+# Добавить импорт
+from pybit.unified_trading import HTTP as PybitHTTP
+
 from config.settings import get_settings
 
 
 class MarketAnalyzer:
-    """ИИ анализатор рынка через OpenAI GPT-4 (исправленная версия)"""
+    """ИИ анализатор рынка через OpenAI GPT-4 (исправленная версия с pybit)"""
     
     def __init__(self, websocket_manager=None):
         self.settings = get_settings()
@@ -100,36 +103,37 @@ class MarketAnalyzer:
             return {}, error_msg
     
     async def _collect_comprehensive_market_data(self, symbol: str = None) -> Dict[str, Any]:
-        """Сбор всех доступных рыночных данных - ИСПРАВЛЕННАЯ ВЕРСИЯ"""
+        """Сбор данных через pybit HTTP API"""
         try:
             if not self.websocket_manager:
                 self.logger.error("WebSocket manager не инициализирован")
                 return {}
             
-            # Проверяем подключение WebSocket
-            connection_status = self.websocket_manager.get_connection_status()
-            if not connection_status.get("is_connected", False):
-                self.logger.error("WebSocket не подключен")
-                return {}
+            self.logger.info("Сбор данных через pybit HTTP API...")
             
-            self.logger.info("WebSocket подключен, собираем comprehensive данные...")
+            # Используем pybit HTTP клиент
+            if hasattr(self.websocket_manager, 'http_client'):
+                http_client = self.websocket_manager.http_client
+            else:
+                # Создаем временный клиент
+                settings = get_settings()
+                http_client = PybitHTTP(testnet=settings.BYBIT_WS_TESTNET)
             
-            # ИСПРАВЛЕНО: Добавлен await
+            # Собираем данные через pybit (один запрос вместо множественных)
+            symbol = symbol or self.settings.TRADING_PAIR
+            
+            # Данные уже доступны в websocket_manager
             comprehensive_data = await self.websocket_manager.get_comprehensive_market_data(symbol)
             
-            if not comprehensive_data:
-                self.logger.warning("get_comprehensive_market_data вернул пустые данные, пробуем fallback...")
+            if comprehensive_data:
+                self.logger.info("✅ Comprehensive данные получены через pybit")
+                return comprehensive_data
+            else:
+                self.logger.warning("Нет данных от pybit, используем fallback")
+                return await self._collect_fallback_data(symbol)
                 
-                # Fallback - собираем базовые данные вручную
-                comprehensive_data = await self._collect_fallback_data(symbol)
-            
-            # Логируем что получили
-            self._log_collected_data(comprehensive_data)
-            
-            return comprehensive_data
-            
         except Exception as e:
-            self.logger.error(f"Ошибка сбора рыночных данных: {e}")
+            self.logger.error(f"Ошибка сбора данных через pybit: {e}")
             return {}
     
     async def _collect_fallback_data(self, symbol: str = None) -> Dict[str, Any]:
