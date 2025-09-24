@@ -1,6 +1,6 @@
 """
 Упрощенный WebSocket менеджер на основе pybit
-Заменяет сложный core/websocket_manager.py
+ИСПРАВЛЕНО: правильная обработка структуры данных от pybit
 """
 
 import asyncio
@@ -14,7 +14,7 @@ from config.settings import get_settings
 
 
 class PybitWebSocketManager:
-    """Упрощенный WebSocket менеджер на основе pybit"""
+    """Упрощенный WebSocket менеджер на основе pybit (исправленная версия)"""
     
     def __init__(self, symbol: str, strategy, on_signal_callback: Optional[Callable] = None):
         self.settings = get_settings()
@@ -96,106 +96,192 @@ class PybitWebSocketManager:
         self.logger.info(f"✅ Подписка на trades {self.symbol}")
     
     def _handle_kline(self, message):
-        """Обработка kline данных от pybit"""
+        """ИСПРАВЛЕНО: Обработка kline данных от pybit"""
         try:
-            # pybit уже обработал данные!
-            if message.get('type') == 'snapshot' and message.get('data'):
-                kline_data = message['data']
-                
-                # Преобразуем в формат для стратегии
-                processed_kline = {
-                    "timestamp": kline_data.get('start', 0),
-                    "datetime": datetime.fromtimestamp(int(kline_data.get('start', 0)) / 1000),
-                    "open": float(kline_data.get('open', 0)),
-                    "high": float(kline_data.get('high', 0)),
-                    "low": float(kline_data.get('low', 0)),
-                    "close": float(kline_data.get('close', 0)),
-                    "volume": float(kline_data.get('volume', 0)),
-                    "confirm": kline_data.get('confirm', False)
-                }
-                
-                # Сохраняем данные
-                self.market_data["klines"].append(processed_kline)
-                if len(self.market_data["klines"]) > 100:
-                    self.market_data["klines"] = self.market_data["klines"][-100:]
-                
-                # Передаем в стратегию
-                if self.strategy:
-                    asyncio.create_task(self._process_strategy_signal(processed_kline))
-                
-                self.logger.debug(f"📊 Kline обработан: {processed_kline['close']}")
+            self.logger.debug(f"📊 Raw kline message: {type(message)} - {str(message)[:200]}")
+            
+            # ИСПРАВЛЕНИЕ: pybit может передавать данные в разных форматах
+            if isinstance(message, list):
+                # Если это список, берем первый элемент
+                if len(message) > 0:
+                    kline_data = message[0]
+                else:
+                    self.logger.warning("Пустой список kline данных")
+                    return
+            elif isinstance(message, dict):
+                # Если это словарь, проверяем структуру
+                if 'data' in message and isinstance(message['data'], list) and len(message['data']) > 0:
+                    kline_data = message['data'][0]
+                elif 'data' in message and isinstance(message['data'], dict):
+                    kline_data = message['data']
+                else:
+                    kline_data = message
+            else:
+                self.logger.error(f"Неожиданный тип kline данных: {type(message)}")
+                return
+            
+            self.logger.debug(f"📊 Processed kline_data: {type(kline_data)} - {kline_data}")
+            
+            # ИСПРАВЛЕНИЕ: Безопасное извлечение данных
+            processed_kline = {
+                "timestamp": self._safe_get(kline_data, ["start", "timestamp", "t"], 0),
+                "datetime": None,
+                "open": float(self._safe_get(kline_data, ["open", "o"], 0)),
+                "high": float(self._safe_get(kline_data, ["high", "h"], 0)),
+                "low": float(self._safe_get(kline_data, ["low", "l"], 0)),
+                "close": float(self._safe_get(kline_data, ["close", "c"], 0)),
+                "volume": float(self._safe_get(kline_data, ["volume", "v"], 0)),
+                "confirm": self._safe_get(kline_data, ["confirm"], True)  # По умолчанию True
+            }
+            
+            # Преобразуем timestamp в datetime
+            if processed_kline["timestamp"]:
+                try:
+                    processed_kline["datetime"] = datetime.fromtimestamp(int(processed_kline["timestamp"]) / 1000)
+                except:
+                    processed_kline["datetime"] = datetime.now()
+            else:
+                processed_kline["datetime"] = datetime.now()
+            
+            # Сохраняем данные
+            self.market_data["klines"].append(processed_kline)
+            if len(self.market_data["klines"]) > 100:
+                self.market_data["klines"] = self.market_data["klines"][-100:]
+            
+            self.logger.info(f"📊 Kline обработан: {processed_kline['close']:.4f} @ {processed_kline['datetime']}")
+            
+            # Передаем в стратегию
+            if self.strategy:
+                asyncio.create_task(self._process_strategy_signal(processed_kline))
                 
         except Exception as e:
             self.logger.error(f"❌ Ошибка обработки kline: {e}")
+            self.logger.error(f"Raw message: {message}")
+    
+    def _safe_get(self, data, keys, default=None):
+        """НОВОЕ: Безопасное получение значений из словаря"""
+        if not isinstance(data, dict):
+            return default
+        
+        for key in keys:
+            if key in data:
+                return data[key]
+        return default
     
     def _handle_ticker(self, message):
-        """Обработка ticker данных от pybit"""
+        """ИСПРАВЛЕНО: Обработка ticker данных от pybit"""
         try:
-            if message.get('type') == 'snapshot' and message.get('data'):
-                ticker_data = message['data']
-                
-                # Сохраняем ticker данные
-                self.market_data["ticker"] = {
-                    "symbol": ticker_data.get('symbol'),
-                    "price": float(ticker_data.get('lastPrice', 0)),
-                    "change_24h": float(ticker_data.get('price24hPcnt', 0)) * 100,
-                    "volume_24h": float(ticker_data.get('volume24h', 0)),
-                    "high_24h": float(ticker_data.get('highPrice24h', 0)),
-                    "low_24h": float(ticker_data.get('lowPrice24h', 0)),
-                    "timestamp": datetime.now().isoformat()
-                }
-                
-                self.logger.debug(f"💰 Ticker обновлен: ${ticker_data.get('lastPrice')}")
-                
+            self.logger.debug(f"💰 Raw ticker message: {type(message)}")
+            
+            # Аналогичная безопасная обработка
+            if isinstance(message, list) and len(message) > 0:
+                ticker_data = message[0]
+            elif isinstance(message, dict):
+                if 'data' in message and isinstance(message['data'], list) and len(message['data']) > 0:
+                    ticker_data = message['data'][0]
+                elif 'data' in message and isinstance(message['data'], dict):
+                    ticker_data = message['data']
+                else:
+                    ticker_data = message
+            else:
+                self.logger.error(f"Неожиданный тип ticker данных: {type(message)}")
+                return
+            
+            # Сохраняем ticker данные
+            self.market_data["ticker"] = {
+                "symbol": self._safe_get(ticker_data, ["symbol", "s"], self.symbol),
+                "price": float(self._safe_get(ticker_data, ["lastPrice", "c", "price"], 0)),
+                "change_24h": float(self._safe_get(ticker_data, ["price24hPcnt"], 0)) * 100,
+                "volume_24h": float(self._safe_get(ticker_data, ["volume24h", "v"], 0)),
+                "high_24h": float(self._safe_get(ticker_data, ["highPrice24h", "h"], 0)),
+                "low_24h": float(self._safe_get(ticker_data, ["lowPrice24h", "l"], 0)),
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            self.logger.info(f"💰 Ticker обновлен: {self.market_data['ticker']['symbol']} @ ${self.market_data['ticker']['price']:.2f}")
+            
         except Exception as e:
             self.logger.error(f"❌ Ошибка обработки ticker: {e}")
+            self.logger.error(f"Raw message: {message}")
     
     def _handle_orderbook(self, message):
-        """Обработка orderbook данных от pybit"""
+        """ИСПРАВЛЕНО: Обработка orderbook данных от pybit"""
         try:
-            if message.get('type') == 'snapshot' and message.get('data'):
-                orderbook_data = message['data']
+            self.logger.debug(f"📚 Raw orderbook message: {type(message)}")
+            
+            # Безопасная обработка orderbook
+            if isinstance(message, dict):
+                if 'data' in message and isinstance(message['data'], dict):
+                    orderbook_data = message['data']
+                else:
+                    orderbook_data = message
+            else:
+                self.logger.error(f"Неожиданный тип orderbook данных: {type(message)}")
+                return
+            
+            bids = orderbook_data.get('b', orderbook_data.get('bids', []))
+            asks = orderbook_data.get('a', orderbook_data.get('asks', []))
+            
+            self.market_data["orderbook"] = {
+                "bids": [[float(bid[0]), float(bid[1])] for bid in bids[:10]] if bids else [],
+                "asks": [[float(ask[0]), float(ask[1])] for ask in asks[:10]] if asks else [],
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            # Вычисляем спред
+            if self.market_data["orderbook"]["bids"] and self.market_data["orderbook"]["asks"]:
+                best_bid = self.market_data["orderbook"]["bids"][0][0]
+                best_ask = self.market_data["orderbook"]["asks"][0][0]
+                self.market_data["orderbook"]["spread"] = best_ask - best_bid
                 
-                self.market_data["orderbook"] = {
-                    "bids": [[float(bid[0]), float(bid[1])] for bid in orderbook_data.get('b', [])[:10]],
-                    "asks": [[float(ask[0]), float(ask[1])] for ask in orderbook_data.get('a', [])[:10]],
-                    "timestamp": datetime.now().isoformat()
-                }
-                
-                # Вычисляем спред
-                if self.market_data["orderbook"]["bids"] and self.market_data["orderbook"]["asks"]:
-                    best_bid = self.market_data["orderbook"]["bids"][0][0]
-                    best_ask = self.market_data["orderbook"]["asks"][0][0]
-                    self.market_data["orderbook"]["spread"] = best_ask - best_bid
-                
-                self.logger.debug(f"📚 Orderbook обновлен")
-                
+                self.logger.debug(f"📚 Orderbook обновлен: bid=${best_bid:.4f}, ask=${best_ask:.4f}")
+            
         except Exception as e:
             self.logger.error(f"❌ Ошибка обработки orderbook: {e}")
+            self.logger.error(f"Raw message: {message}")
     
     def _handle_trades(self, message):
-        """Обработка trade данных от pybit"""
+        """ИСПРАВЛЕНО: Обработка trade данных от pybit"""
         try:
-            if message.get('data'):
-                for trade_data in message['data']:
-                    trade = {
-                        "timestamp": trade_data.get('T', 0),
-                        "price": float(trade_data.get('p', 0)),
-                        "size": float(trade_data.get('v', 0)),
-                        "side": trade_data.get('S', ''),
-                        "datetime": datetime.fromtimestamp(int(trade_data.get('T', 0)) / 1000)
-                    }
-                    
-                    self.market_data["trades"].append(trade)
-                    
-                    # Ограничиваем размер
-                    if len(self.market_data["trades"]) > 1000:
-                        self.market_data["trades"] = self.market_data["trades"][-1000:]
+            self.logger.debug(f"💹 Raw trades message: {type(message)}")
+            
+            # Безопасная обработка trades
+            if isinstance(message, dict) and 'data' in message:
+                trades_data = message['data']
+                if not isinstance(trades_data, list):
+                    trades_data = [trades_data]
+            elif isinstance(message, list):
+                trades_data = message
+            else:
+                self.logger.error(f"Неожиданный тип trades данных: {type(message)}")
+                return
+            
+            for trade_info in trades_data:
+                trade = {
+                    "timestamp": self._safe_get(trade_info, ["T", "timestamp", "t"], int(datetime.now().timestamp() * 1000)),
+                    "price": float(self._safe_get(trade_info, ["p", "price"], 0)),
+                    "size": float(self._safe_get(trade_info, ["v", "size", "quantity"], 0)),
+                    "side": self._safe_get(trade_info, ["S", "side"], ""),
+                    "datetime": None
+                }
                 
-                self.logger.debug(f"💹 Trades обновлены: +{len(message['data'])}")
+                # Преобразуем timestamp в datetime
+                try:
+                    trade["datetime"] = datetime.fromtimestamp(int(trade["timestamp"]) / 1000)
+                except:
+                    trade["datetime"] = datetime.now()
                 
+                self.market_data["trades"].append(trade)
+                
+                # Ограничиваем размер
+                if len(self.market_data["trades"]) > 1000:
+                    self.market_data["trades"] = self.market_data["trades"][-1000:]
+            
+            self.logger.debug(f"💹 Trades обновлены: +{len(trades_data)}, всего: {len(self.market_data['trades'])}")
+            
         except Exception as e:
             self.logger.error(f"❌ Ошибка обработки trades: {e}")
+            self.logger.error(f"Raw message: {message}")
     
     async def _process_strategy_signal(self, kline_data):
         """Обработка сигнала от стратегии"""
