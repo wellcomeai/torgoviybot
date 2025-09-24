@@ -1,9 +1,9 @@
 """
 Основные компоненты торгового бота
-WebSocket менеджеры и обработчики данных на базе pybit
+ИСПРАВЛЕНО: импорт из новой архитектуры
 """
 
-# НОВЫЙ импорт
-from .pybit_websocket_manager import PybitWebSocketManager as WebSocketManager
+# НОВЫЙ импорт с правильной архитектурой
+from .market_manager import MarketManager as WebSocketManager
 
 __all__ = ["WebSocketManager"]
