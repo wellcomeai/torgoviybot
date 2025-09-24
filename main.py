@@ -2,6 +2,7 @@
 Главный файл торгового бота для Bybit с ИИ-анализом
 Веб-сервис для деплоя на Render с интеграцией OpenAI GPT-4
 Обновлено: добавлен ИИ-анализ рынка через MarketAnalyzer
+Обновлено: интеграция с официальной библиотекой pybit v5.11.0
 """
 
 import asyncio
@@ -82,7 +83,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Bybit Trading Bot with AI Analysis",
     description="Торговый бот для фьючерсов Bybit с ИИ-анализом через OpenAI GPT-4",
-    version="2.0.0",
+    version="2.1.0",
     lifespan=lifespan
 )
 
@@ -90,11 +91,16 @@ app = FastAPI(
 async def initialize_bot():
     """Инициализация всех компонентов бота включая ИИ-анализатор"""
     try:
-        logger.info("Инициализация компонентов с ИИ-анализом...")
+        logger.info("Инициализация компонентов с pybit...")
         
         # Загрузка настроек
         bot_manager.settings = get_settings()
         logger.info(f"✅ Настройки загружены")
+        
+        # НОВОЕ: Логирование использования pybit
+        logger.info("✅ Используется официальная библиотека pybit v5.11.0")
+        logger.info(f"   WebSocket: {bot_manager.settings.websocket_url}")
+        logger.info(f"   REST API: {bot_manager.settings.bybit_rest_url}")
         
         # Инициализация стратегии
         bot_manager.strategy = BaseStrategy(
@@ -227,10 +233,11 @@ async def root():
     return {
         "message": "Bybit Trading Bot with AI Analysis",
         "status": "running" if bot_manager.status["is_running"] else "stopped",
-        "version": "2.0.0",
+        "version": "2.1.0",
         "timestamp": datetime.now().isoformat(),
         "pair": bot_manager.status["current_pair"],
-        "ai_enabled": bot_manager.status["ai_analysis_enabled"]
+        "ai_enabled": bot_manager.status["ai_analysis_enabled"],
+        "pybit_version": "5.11.0"
     }
 
 
@@ -252,7 +259,8 @@ async def health_check():
         "current_pair": bot_manager.status["current_pair"],
         "signals_count": bot_manager.status["signals_count"],
         "ai_analysis_enabled": bot_manager.status["ai_analysis_enabled"],
-        "ai_analysis_count": bot_manager.status["ai_analysis_count"]
+        "ai_analysis_count": bot_manager.status["ai_analysis_count"],
+        "pybit_version": "5.11.0"
     }
 
 
@@ -284,7 +292,12 @@ async def get_bot_status():
         },
         "last_price": bot_manager.status.get("last_price"),
         "strategy_data": bot_manager.strategy.get_current_data() if bot_manager.strategy else None,
-        "ai_analyzer_status": bot_manager.market_analyzer.get_status() if bot_manager.market_analyzer else None
+        "ai_analyzer_status": bot_manager.market_analyzer.get_status() if bot_manager.market_analyzer else None,
+        "library_info": {
+            "pybit_version": "5.11.0",
+            "websocket_url": bot_manager.settings.websocket_url if bot_manager.settings else None,
+            "rest_url": bot_manager.settings.bybit_rest_url if bot_manager.settings else None
+        }
     }
 
 
@@ -506,6 +519,7 @@ if __name__ == "__main__":
     
     logger.info(f"🚀 Запуск сервера с ИИ-анализом на {host}:{port}")
     logger.info(f"📊 OpenAI настроен: {'Да' if os.getenv('OPENAI_API_KEY') else 'Нет'}")
+    logger.info(f"📦 Используется pybit v5.11.0 для Bybit API")
     
     uvicorn.run(
         "main:app",
